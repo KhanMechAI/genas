@@ -5,11 +5,11 @@ import networkx as nx
 from networkx import DiGraph
 from typing import Union, List, Callable, Dict, Type, Tuple
 
-from src.genotype.base_pairs import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
-    BinaryNode, PoolNode
-
-# from .base_pairs import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+# from src.genotype.base_pairs import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
 #     BinaryNode, PoolNode
+
+from .base_pairs import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+    BinaryNode, PoolNode
 
 # import matplotlib
 import matplotlib.pyplot as plt
@@ -20,44 +20,11 @@ class RandomArchitectureGenerator:
     MIN_DEPTH = 5
     MAX_ITER = 100
     NODE_TYPES = {'BINARY', 'CONV', 'POOL', 'INPUT', 'REFERENCE'}
-    KERNEL_CLASSES = {'CONV', 'MAX', 'AVERAGE'}
-    PADDING_MODE = 'replicate'
-    KERNEL_CHOICES = (3, 3, 5, 7)
     IMAGE_CHANNELS = 3
-    IMAGE_SIZE = 128  # 128x128 assuming square
-    # CHANNEL_CHOICES = (32, 64, 128, 256, 512)
-    # KERNEL_CHOICES = (3, 3, 5, 7)  # 3x3 kernel 50% likely, 25% for 5x5 and 7x7 respectively.
-    DEFAULT_IMAGE_SIZE = 128
-    TYPE_MAP = dict(
-        CONV=dict(
-            TYPE='CONV',
-            ARITY=1,
-        ),
-        INPUT=dict(
-            TYPE='INPUT',
-            ARITY=0
-        ),
-        MAX=dict(
-            TYPE='MAX',
-            ARITY=1
-        ),
-        AVERAGE=dict(
-            TYPE='AVERAGE',
-            ARITY=1
-        ),
-        SUM=dict(
-            TYPE='SUM',
-            ARITY=2
-        ),
-        CONCAT=dict(
-            TYPE='CONCAT',
-            ARITY=2
-        ),
-    )
-    POOL_TYPES = {'MAX', 'AVERAGE'}
-    BINARY_TYPES = {'SUM', 'CONCAT'}
+    DEFAULT_IMAGE_SIZE = 128 # 128x128 assuming square
 
-    def __init__(self, min_depth=MIN_DEPTH, max_depth=MAX_DEPTH, image_size: Union[int, tuple, list]=DEFAULT_IMAGE_SIZE, input_channels: int=IMAGE_CHANNELS):
+    def __init__(self, min_depth=MIN_DEPTH, max_depth=MAX_DEPTH,
+                 image_size: Union[int, tuple, list] = DEFAULT_IMAGE_SIZE, input_channels: int = IMAGE_CHANNELS):
         self.min_depth = min_depth
         self.max_depth = max_depth
         if isinstance(image_size, int):
@@ -94,9 +61,6 @@ class RandomArchitectureGenerator:
         self.node_reference: Dict[int, Node] = {
             self.root_id: self.random_new_node(self.root_id, {'REFERENCE', 'INPUT', })
         }
-
-
-
 
     @property
     def pool_count(self):
@@ -151,6 +115,8 @@ class RandomArchitectureGenerator:
             )
             self.input_nodes.append(node_id)
 
+        new_node.random_initialisation()
+
         return new_node
 
     def random_new_node(self, node_id: int, restricted_types: set) -> Node:
@@ -178,7 +144,6 @@ class RandomArchitectureGenerator:
 
         if new_type is not None:
             new_node = self.create_new_node(new_type, node_id)
-            new_node.random_initialisation()
 
         return new_node
 
@@ -189,8 +154,6 @@ class RandomArchitectureGenerator:
             node = node_type
         else:
             node = self.create_new_node(node_type=node_type, node_id=node_id)
-
-        # self._increment_counters(node_id, node)
 
         if predecessor_id is not None:
             self.graph.add_edge(predecessor_id, node_id)
@@ -272,12 +235,29 @@ class RandomArchitectureGenerator:
         self.contract_input_nodes()
         self.update_nodes()
 
+        # Now that the graph is complete, the nodes can be initialised
+        self.node_reference[self.input_nodes].initialise()
+
         retval = (self.graph, self.node_reference)
 
         if reset_on_finish:
             self.reset()
 
         return retval
+
+    def contract_input_nodes(self):
+        if len(self.input_nodes) < 2:
+            self.input_nodes = self.input_nodes[0]
+            return
+
+        first_input = self.input_nodes[0]
+        contracted_graph = self.graph.copy()
+        for node in self.input_nodes[1:]:
+            del self.node_reference[node]
+            contracted_graph = nx.contracted_nodes(contracted_graph, first_input, node, self_loops=False)
+
+        self.graph = contracted_graph
+        self.input_nodes = first_input
 
     def _pool_predecessors(self, node):
         return [x for x in self.graph.predecessors(node) if isinstance(self.node_reference[x], PoolNode)]
@@ -320,7 +300,7 @@ class RandomArchitectureGenerator:
         if labels == 'both' or labels == 'type':
             assert node_reference is not None, 'labels=[\'both\' \'type\']  requires a non NoneType attribute map'
 
-            relabel_mapping = {k:v.node_name() for k, v in node_reference.items()}
+            relabel_mapping = {k: v.node_name() for k, v in node_reference.items()}
             computational_graph = nx.relabel_nodes(graph, relabel_mapping, )
             options = {'node_size': 2000, 'alpha': 0.7}
             if labels == 'both':
@@ -343,34 +323,14 @@ class RandomArchitectureGenerator:
             plt.subplot()
             nx.draw(graph, with_labels=True)
 
-    def contract_input_nodes(self):
-        if len(self.input_nodes) < 2:
-            self.input_nodes = self.input_nodes[0]
-            return
+        plt.show()
 
-        first_input = self.input_nodes[0]
-        contracted_graph = self.graph.copy()
-        # contracted_reference = self.node_reference.copy()
-        for node in self.input_nodes[1:]:
-            # Wrote this block to update the node_reference in case of graph re-numbering.
-            # del self.node_reference[node] #removes redundant node from dict
-            # del contracted_reference[node]
-            # temp = contracted_reference.copy()
-            # for k in range(node+1, len(self.node_reference)):
-            #     if k > node:
-            #         temp[k-1] = temp.pop(k)
-            # contracted_reference = temp
-
-            contracted_graph = nx.contracted_nodes(contracted_graph, first_input, node, self_loops=False)
-
-        self.graph = contracted_graph
-        # self.node_reference = contracted_reference
-        self.input_nodes = first_input
 
 if __name__ == '__main__':
     image_size = (128, 128)
     rag = RandomArchitectureGenerator(min_depth=10, max_depth=75, input_channels=3, image_size=image_size)
-    g, a = rag.get_architecture()
+    g=None
+    while g is None:
+        g, a = rag.get_architecture()
 
     rag.show(g.reverse(), a, labels='both')
-

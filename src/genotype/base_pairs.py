@@ -19,8 +19,8 @@ class Node:
         self.predecessors: List[Node] = predecessors  # where the results get pushed to
         self.successors: List[Node] = successors  # recieving inputs from
 
-        self.inputs = Dict[int, torch.Tensor]  # list to store actual input values
-        self.processed_inputs = Dict[str, torch.Tensor]  # list to store actual input values
+        self.inputs: Dict[int, torch.Tensor] = dict()  # list to store actual input values
+        self.processed_inputs: Dict[str, torch.Tensor] = dict()  # list to store actual input values
 
         # need to adjust how lists are handled for sum and concat node
         self.in_channels: int = None
@@ -43,6 +43,9 @@ class Node:
 
         self.name = 'Base Class Node'
 
+    def get_function(self):
+        pass
+
     def node_name(self):
         return f'{self.name}:{self.node_id}'
 
@@ -62,7 +65,6 @@ class Node:
             x = self.function(**self.processed_inputs)
             for pred in self.predecessors:
                 pred.add_input(self, x)
-
 
     def random_initialisation(self):
         # Allows overriding by necessary base classes, else does nothing
@@ -87,7 +89,7 @@ class Node:
     def update_connectivity(self, graph: nx.DiGraph, node_reference: Dict[int, object]):
         self.num_inputs = graph.out_degree(self.node_id)
         self.predecessors = [node_reference[x] for x in graph.predecessors(self.node_id)]
-        self.predecessors = [node_reference[x] for x in graph.successors(self.node_id)]
+        self.successors = [node_reference[x] for x in graph.successors(self.node_id)]
 
     def __repr__(self):
         return repr(self.__dict__)
@@ -120,7 +122,7 @@ class KernelNode(Node):
 
     def __init__(self, node_id: int, ):
         super().__init__(node_id)
-        self.padding = None
+        self.padding = 1
         self.stride = 1
         self.kernel = None
         self.dilation = 1
@@ -131,7 +133,7 @@ class KernelNode(Node):
         self.name = 'Kernel Class Node'
 
     def _out_dim(self, dim):
-        return int((self.dim + 2 * self.padding - self.dilation * (self.kernel - 1) - 1) / self.stride) + 1
+        return int((dim + 2 * self.padding - self.dilation * (self.kernel - 1) - 1) / self.stride) + 1
 
     def _out_width(self):
         return self._out_dim(self.in_width)
@@ -143,11 +145,11 @@ class KernelNode(Node):
         self.out_width = self._out_width()
         self.out_height = self._out_height()
 
-    def random_initialisation(self):
+    def _random_initialisation(self):
         self.kernel = np.random.choice(KernelNode.KERNEL_CHOICES).item()
         self.padding = 1  # Can randomize later with np.random.randint()
 
-    def get_function(self):
+    def _pre_initialise(self):
         pass
 
     def _initialise(self):
@@ -155,6 +157,7 @@ class KernelNode(Node):
         self.in_channels = successor.out_channels
         self.in_height = successor.out_height
         self.in_width = successor.out_width
+        self._pre_initialise()
 
         self._calculate_out_params()
 
@@ -172,7 +175,7 @@ class ConvNode(KernelNode):
         self.name = 'Conv Node'
 
     def random_initialisation(self):
-        super().random_initialisation()
+        super()._random_initialisation()
         self.out_channels = np.random.choice(ConvNode.CHANNEL_CHOICES).item()
 
     def get_function(self):
@@ -204,7 +207,7 @@ class PoolNode(KernelNode):
         self.name = 'Pool Class Node'
 
     def random_initialisation(self):
-        super().random_initialisation()
+        super()._random_initialisation()
         self.kernel = np.random.choice(PoolNode.KERNEL_CHOICES).item()
 
     def _get_function(self, pool_func: Union[Type[nn.MaxPool2d], Type[nn.AvgPool2d]]):
@@ -219,6 +222,8 @@ class PoolNode(KernelNode):
 
         return pool
 
+    def _pre_initialise(self):
+        self.out_channels = self.in_channels
 
 class MaxPoolNode(PoolNode):
 
@@ -252,7 +257,7 @@ class BinaryNode(Node):
         self.in_width: Dict[int, int] = dict()
         self.in_sizes: Dict[int, int] = dict()
 
-        self.processing_stack: Dict[int, List[Callable]] = defaultdict(List)
+        self.processing_stack: Dict[int, List[Callable]] = defaultdict(list)
         self.consolidated_processing_stack: Dict[int, Callable] = {}
 
         self.name = 'Binary Class Node'
@@ -261,6 +266,8 @@ class BinaryNode(Node):
         self.max_channels = max(self.in_channels.values())
 
     def equal_size_input(self) -> bool:
+        if self.num_inputs < 2:
+            return True
         shapes = [[v for v in self.in_width.values()], [v for v in self.in_height.values()]]
         for d1, d2 in shapes:
             if d1 != d2:
@@ -271,9 +278,9 @@ class BinaryNode(Node):
         # smallest input is defined as min(w*h) of all inputs
         return min(self.in_sizes, key=self.in_sizes.get), min(self.in_sizes, key=self.in_sizes.get)
 
-    def resize_func(self, id) -> Resize:
-        resize_shape = (None, self.max_channels, self.in_height[id], self.in_width[id])
-        return Resize(size=resize_shape)
+    def resize_func(self, smaller_id) -> Resize:
+        resize_shape = (None, self.max_channels, self.in_height[smaller_id], self.in_width[smaller_id])
+        return nn.Upsample(size=resize_shape)
 
     def add_resize_to_larger_input_stack(self):
         smaller_id, larger_id = self.shape_ids()
@@ -285,7 +292,7 @@ class BinaryNode(Node):
     def add_channel_to_smaller_input_stack(self):
         smaller_id, larger_id = self.channel_ids()
         num_channels = max(self.in_channels.values()) - min(self.in_channels.values())
-        shape = (None, num_channels, self.output_shape[3], self.output_shape[4])
+        shape = (None, num_channels, self.output_shape[2], self.output_shape[3])
 
         def pad(tensor):
             # concatentate zero_layers to smaller tensor
@@ -299,7 +306,11 @@ class BinaryNode(Node):
 
     def set_output_shape(self):
         small_id, _ = self.shape_ids()
-        self.output_shape = (None, self.max_channels, self.in_height[small_id], self.in_width[small_id])
+        output_shape = (None, self.max_channels, self.in_height[small_id], self.in_width[small_id])
+        self.out_channels = output_shape[1]
+        self.out_height = output_shape[2]
+        self.out_width = output_shape[3]
+        self.output_shape = output_shape
 
     # from: https://stackoverflow.com/questions/16739290/composing-functions-in-python
     @staticmethod
@@ -336,7 +347,6 @@ class SumNode(BinaryNode):
         super().__init__(node_id)
         self.name = 'Sum Node'
 
-
     # this needs to be child node dependent
     def get_processing_stack(self):
 
@@ -352,11 +362,15 @@ class SumNode(BinaryNode):
         self.consolidate_processing_stack()
 
     def get_function(self):
-        def sum_block(a, b):
-            a = self.consolidated_processing_stack[0](a)
-            b = self.consolidated_processing_stack[0](b)
-            x = a + b
-            return x
+        if self.num_inputs > 1:
+            def sum_block(a, b):
+                a = self.consolidated_processing_stack[0](a)
+                b = self.consolidated_processing_stack[0](b)
+                x = a + b
+                return x
+        else:
+            def sum_block(x):
+                return x
 
         return sum_block
 
@@ -378,9 +392,12 @@ class ConcatNode(BinaryNode):
         self.consolidate_processing_stack()
 
     def get_function(self):
-        def concat_block(a, b):
-            a = self.consolidated_processing_stack[0](a)
-            b = self.consolidated_processing_stack[0](b)
-            return torch.cat((a, b), dim=1)
-
+        if self.num_inputs > 1:
+            def concat_block(a, b):
+                a = self.consolidated_processing_stack[0](a)
+                b = self.consolidated_processing_stack[0](b)
+                return torch.cat((a, b), dim=1)
+        else:
+            def concat_block(x):
+                return x
         return concat_block
