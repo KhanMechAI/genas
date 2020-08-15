@@ -9,12 +9,20 @@ from typing import Union, Tuple
 import matplotlib.pyplot as plt
 
 
+
+
 class RandomArchitectureGenerator:
     MAX_DEPTH = 100
     MIN_DEPTH = 5
     MAX_ITER = 100
     NODE_TYPES = {'BINARY', 'CONV', 'POOL', 'INPUT', 'REFERENCE'}
+    KERNEL_CLASSES = {'CONV', 'MAX', 'AVERAGE'}
+    PADDING_MODE = 'replicate'
+    KERNEL_CHOICES = (3, 3, 5, 7)
+    IMAGE_CHANNELS = 3
+    IMAGE_SIZE = 128  # 128x128 assuming square
     CHANNEL_CHOICES = (32, 64, 128, 256, 512)
+    KERNEL_CHOICES = (3, 3, 5, 7)  # 3x3 kernel 50% likely, 25% for 5x5 and 7x7 respectively.
     DEFAULT_IMAGE_SIZE = 128
     TYPE_MAP = dict(
         CONV=dict(
@@ -78,8 +86,15 @@ class RandomArchitectureGenerator:
     @staticmethod
     def _type_map(node_type):
         return_type = RandomArchitectureGenerator.TYPE_MAP[node_type].copy()
+
+        if node_type in RandomArchitectureGenerator.KERNEL_CLASSES:
+            return_type['KERNEL'] = np.random.choice(RandomArchitectureGenerator.KERNEL_CHOICES).item()
+            return_type['PADDING'] = np.random.randint(0, int(return_type['KERNEL'] - 1 / 2))
+            return_type['PADDING_MODE'] = RandomArchitectureGenerator.PADDING_MODE
+
         if node_type == 'CONV':
             return_type['OUT_CHANNELS'] = np.random.choice(RandomArchitectureGenerator.CHANNEL_CHOICES).item()
+
         return return_type
 
     def random_node_from_graph(self) -> int:
@@ -145,10 +160,18 @@ class RandomArchitectureGenerator:
         elif node_type in {'MAX', 'AVERAGE'}:
             self.pool_nodes.append(node)
 
+    def _update_inputs(self, node_attributes, predecessor):
+        if node_attributes['ARITY'] > 2:
+            if 'IN_CHANNELS' in node_attributes:
+                node_attributes['IN_CHANNELS'].append(self.attribute_map[predecessor]['OUT_CHANNELS'])
+            else:
+                node_attributes['IN_CHANNELS'] = [self.attribute_map[predecessor]['OUT_CHANNELS']]
+        else:
+            node_attributes['IN_CHANNELS'] = self.attribute_map[predecessor]['OUT_CHANNELS']
+        return node_attributes
+
     def add_new_node(self, new_node, node_type: Union[str, dict], predecessor=None):
         self.graph.add_node(new_node)
-        if predecessor is not None:
-            self.graph.add_edge(predecessor, new_node)
 
         if type(node_type) == dict:
             node_attributes = node_type
@@ -156,6 +179,10 @@ class RandomArchitectureGenerator:
             node_attributes = self._type_map(node_type)
 
         self._increment_counters(new_node, node_attributes)
+
+        if predecessor is not None:
+            self.graph.add_edge(predecessor, new_node)
+            # node_attributes = self._update_inputs(node_attributes, predecessor)
 
         self.attribute_map[new_node] = node_attributes
 
@@ -178,6 +205,7 @@ class RandomArchitectureGenerator:
 
             if valid:
                 self.graph.add_edge(node, existing_node)
+                # self.attribute_map[existing_node] = self._update_inputs(self.attribute_map[existing_node], node)
             else:
                 new_node = self.graph.number_of_nodes()
                 self.add_new_node(new_node, node_type='INPUT', predecessor=node)
@@ -239,7 +267,7 @@ class RandomArchitectureGenerator:
             connected_pool_nodes = self._pool_predecessors(input_node)
             if break_flag:
                 break
-            if connected_pool_nodes: #If there is any connected nodes, iterate over them
+            if connected_pool_nodes:  # If there is any connected nodes, iterate over them
                 for pool_node in connected_pool_nodes:
                     # get a new conv type to replace the pool node
                     self.attribute_map[pool_node] = self._type_map('CONV')
@@ -247,11 +275,10 @@ class RandomArchitectureGenerator:
                     # remove from list of pool nodes as it is now a conv node
                     self.pool_nodes.remove(pool_node)
 
-                    break_flag =  self.pool_count < self.max_pool
+                    break_flag = self.pool_count < self.max_pool
 
                     if break_flag:
                         break
-
 
     def reset(self, min_depth: int = None, max_depth: int = None):
         if min_depth is None:
@@ -269,16 +296,15 @@ class RandomArchitectureGenerator:
 
             relabel_mapping = {k: f'{v["TYPE"]}:{k}' for k, v in attribute_map.items()}
             computational_graph = nx.relabel_nodes(graph, relabel_mapping, )
-            options = {'node_size': 2000, 'alpha':0.7}
+            options = {'node_size': 2000, 'alpha': 0.7}
             if labels == 'both':
                 plt.figure(figsize=(15, 8))
                 plt.subplot(121)
                 pos = nx.spring_layout(computational_graph, iterations=50)
                 nx.draw(computational_graph, pos, with_labels=True, **options)
 
-
                 plt.subplot(122)
-                pos = nx.spiral_layout(graph,)
+                pos = nx.spiral_layout(graph, )
                 nx.draw(graph, with_labels=True)
 
             else:
