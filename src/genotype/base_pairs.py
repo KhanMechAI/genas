@@ -10,10 +10,12 @@ import torch.nn.functional as F
 import torchvision
 from torchvision.transforms import Resize
 
+import networkx as nx
+
 
 class Node:
 
-    def __init__(self, predecessors: List, successors: List = [], ):
+    def __init__(self, node_id: int, predecessors: List = [], successors: List = [], ):
         self.predecessors: List[Node] = predecessors  # where the results get pushed to
         self.successors: List[Node] = successors  # recieving inputs from
 
@@ -32,12 +34,17 @@ class Node:
 
         self.function: Callable = None
 
-        self.id: int = None
+        self.node_id: int = node_id
 
-        self.airity: int = 0  # Max number of inputs
+        self.arity: int = None  # Max number of inputs
         self.num_inputs: int = None  # set this with the degree of the node from the graph
 
         self.initialised: bool = False
+
+        self.name = 'Base Class Node'
+
+    def node_name(self):
+        return f'{self.name}:{self.node_id}'
 
     def successors_initialised(self):
         for suc in self.successors:
@@ -48,12 +55,18 @@ class Node:
     def inputs_full(self):
         return len(self.inputs.keys()) == self.num_inputs
 
+    # TODO: get the function call and pushing of inputs working
     def add_input(self, node, tensor: torch.Tensor):
         self.inputs[node.id] = tensor
         if self.inputs_full():
             x = self.function(**self.processed_inputs)
             for pred in self.predecessors:
                 pred.add_input(self, x)
+
+
+    def random_initialisation(self):
+        # Allows overriding by necessary base classes, else does nothing
+        pass
 
     def _initialise_predecessors(self):
         for pred in self.predecessors:
@@ -71,11 +84,19 @@ class Node:
         if self.initialised:
             self._initialise_predecessors()
 
+    def update_connectivity(self, graph: nx.DiGraph, node_reference: Dict[int, object]):
+        self.num_inputs = graph.out_degree(self.node_id)
+        self.predecessors = [node_reference[x] for x in graph.predecessors(self.node_id)]
+        self.predecessors = [node_reference[x] for x in graph.successors(self.node_id)]
+
+    def __repr__(self):
+        return repr(self.__dict__)
+
 
 class InputNode(Node):
 
-    def __init__(self, channels: int, height: int, width: int):
-        super().__init__()
+    def __init__(self, node_id: int, channels: int, height: int, width: int):
+        super().__init__(node_id)
         self.in_channels: int = channels
         self.out_channels: int = self.in_channels
 
@@ -84,8 +105,10 @@ class InputNode(Node):
 
         self.in_width: int = width
         self.out_width: int = self.in_width
-
+        self.arity = 0
         self._initialise()
+
+        self.name = 'Input Node'
 
     def _initialise(self):
         self.initialised = True
@@ -95,8 +118,8 @@ class KernelNode(Node):
     # ARITY = 1
     KERNEL_CHOICES = (3, 3, 5, 7)
 
-    def __init__(self):
-        super.__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
         self.padding = None
         self.stride = 1
         self.kernel = None
@@ -104,6 +127,8 @@ class KernelNode(Node):
         # self.min_width = min(self.in_width)
         # self.min_height = min(self.in_height)
         self.arity = 1
+
+        self.name = 'Kernel Class Node'
 
     def _out_dim(self, dim):
         return int((self.dim + 2 * self.padding - self.dilation * (self.kernel - 1) - 1) / self.stride) + 1
@@ -141,9 +166,10 @@ class ConvNode(KernelNode):
     PAD_MODES = {'zeros', 'reflect', 'replicate', 'circular'}
     CHANNEL_CHOICES = (32, 64, 128, 256, 512)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
         self.pad_mode = None
+        self.name = 'Conv Node'
 
     def random_initialisation(self):
         super().random_initialisation()
@@ -172,9 +198,10 @@ class ConvNode(KernelNode):
 class PoolNode(KernelNode):
     KERNEL_CHOICES = (2, 2, 2, 2, *KernelNode.KERNEL_CHOICES)  # potentially just override with 2
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
         self.stride = 2
+        self.name = 'Pool Class Node'
 
     def random_initialisation(self):
         super().random_initialisation()
@@ -195,8 +222,9 @@ class PoolNode(KernelNode):
 
 class MaxPoolNode(PoolNode):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
+        self.name = 'MaxPool Node'
 
     def get_function(self):
         return self._get_function(pool_func=nn.MaxPool2d)
@@ -204,8 +232,9 @@ class MaxPoolNode(PoolNode):
 
 class AvgPoolNode(PoolNode):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
+        self.name = 'Average Pool Node'
 
     def get_function(self):
         return self._get_function(pool_func=nn.AvgPool2d)
@@ -214,8 +243,8 @@ class AvgPoolNode(PoolNode):
 class BinaryNode(Node):
     # ARITY = 2
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
         self.output_shape: tuple = ()
         self.arity = 2
         self.in_channels: Dict[int, int] = dict()
@@ -225,6 +254,8 @@ class BinaryNode(Node):
 
         self.processing_stack: Dict[int, List[Callable]] = defaultdict(List)
         self.consolidated_processing_stack: Dict[int, Callable] = {}
+
+        self.name = 'Binary Class Node'
 
     def set_max_channels(self):
         self.max_channels = max(self.in_channels.values())
@@ -281,15 +312,16 @@ class BinaryNode(Node):
         return reduce(BinaryNode._compose, fs)
 
     def consolidate_processing_stack(self):
-        for id in self.inputs.keys():
-            self.consolidated_processing_stack[id] = self.reduce_compose(*self.processing_stack[id])
+        for input_node_id in self.inputs.keys():
+            self.consolidated_processing_stack[input_node_id] \
+                = self.reduce_compose(*self.processing_stack[input_node_id])
 
     def _pre_initialise(self):
         for suc in self.successors:
-            self.in_channels[suc.id] = suc.out_channels
-            self.in_height[suc.id] = suc.out_height
-            self.in_width[suc.id] = suc.out_width
-            self.in_sizes[suc.id] = suc.out_width * suc.out_height
+            self.in_channels[suc.node_id] = suc.out_channels
+            self.in_height[suc.node_id] = suc.out_height
+            self.in_width[suc.node_id] = suc.out_width
+            self.in_sizes[suc.node_id] = suc.out_width * suc.out_height
 
         self.set_max_channels()
         self.set_output_shape()
@@ -300,8 +332,10 @@ class BinaryNode(Node):
 
 class SumNode(BinaryNode):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
+        self.name = 'Sum Node'
+
 
     # this needs to be child node dependent
     def get_processing_stack(self):
@@ -323,13 +357,15 @@ class SumNode(BinaryNode):
             b = self.consolidated_processing_stack[0](b)
             x = a + b
             return x
+
         return sum_block
 
 
 class ConcatNode(BinaryNode):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, node_id: int, ):
+        super().__init__(node_id)
+        self.name = 'Concat Node'
 
     # this needs to be child node dependent
     def get_processing_stack(self):
@@ -341,10 +377,10 @@ class ConcatNode(BinaryNode):
         self.get_processing_stack()
         self.consolidate_processing_stack()
 
-
     def get_function(self):
         def concat_block(a, b):
             a = self.consolidated_processing_stack[0](a)
             b = self.consolidated_processing_stack[0](b)
             return torch.cat((a, b), dim=1)
+
         return concat_block
