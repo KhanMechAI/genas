@@ -4,15 +4,13 @@ from collections import defaultdict
 from functools import reduce
 
 import numpy as np
-from typing import Union, List, Callable, Dict, Type, Tuple, TypeVar
+from typing import Union, List, Callable, Dict, Type, Tuple
 import torch
 from torch import nn
 import torch.nn.functional as F
-
-import torchvision
-from torchvision.transforms import Resize
-
 from networkx import DiGraph
+
+from .models import InputBlock, OutBlock, ConvBlock, PoolBlock, SumBlock, ConcatBlock
 
 
 class Node(nn.Module):
@@ -35,7 +33,7 @@ class Node(nn.Module):
         self.in_width: int = None
         self.out_width: int = None
 
-        self.model: Callable = lambda value_dict: (list(value_dict.values())[0])  # I pass a dictionary
+        self.model: Callable = None  # I pass a dictionary
         # of values that most functions only need the first element of, but some functions need the whole dict.
 
         self.node_id: int = node_id
@@ -50,37 +48,38 @@ class Node(nn.Module):
         self.terminal = self.node_id == -1
 
     def __str__(self):
+        k = 4
         representation = (
-            'General: \n'
-            '\t ID: {node_id}\n'
-            '\t Initialised: {initialised}\n'
-            '\t Type: {name}\n'
-            '\n Input Info: \n'
-            '\t Channels: {in_channels}\n'
-            '\t Height: {in_height}\n'
-            '\t Width: {in_width}\n'
-            '\n Output Info: \n'
-            '\t Channels: {out_channels}\n'
-            '\t Height: {out_height}\n'
-            '\t Width: {out_width}\n'
-            '\n Connectivity: \n'
-            f'\t Successors ID: {self.get_successor_id()}\n'
-            f'\t Predecessors ID: {self.get_predecessor_id()}\n'
-            '\t Inputs: {num_inputs}\n'
-        ).format(**self.__dict__)
-        return representation
+            'General: ',
+            f'{" " * k}ID: {self.node_id}',
+            f'{" " * k}Initialised: {self.initialised}',
+            f'{" " * k}Type: {self.name}',
+            'Input Info: ',
+            f'{" " * k}Channels: {self.in_channels}',
+            f'{" " * k}Height: {self.in_height}',
+            f'{" " * k}Width: {self.in_width}',
+            'Output Info: ',
+            f'{" " * k}Channels: {self.out_channels}',
+            f'{" " * k}Height: {self.out_height}',
+            f'{" " * k}Width: {self.out_width}',
+            'Connectivity: ',
+            f'{" " * k}Successors ID: {self.get_successor_id()}',
+            f'{" " * k}Predecessors ID: {self.get_predecessor_id()}',
+            f'{" " * k}Inputs: {self.num_inputs}',
+        )
+        return '\n'.join(representation, )
 
     def __repr__(self):
         rep = (
-            f'{type(self).__name__}(\n'
-            f'\t node_id={self.node_id},\n'
+            f'{type(self).__name__}('
+            f'node_id={self.node_id}, '
             # f'\t [predecessors=[{self.predecessors}]],\n'
             # f'\t [successors=[{self.successors}]]\n'
-            f'\t )'
+            f')'
         )
         return rep
 
-    def get_function(self):
+    def get_model(self):
         pass
 
     def node_name(self):
@@ -102,12 +101,12 @@ class Node(nn.Module):
             x = self.model(self.inputs)
             if self.terminal:
                 print(self)
-                return x, self.node_id
+                return x
             else:
                 for pred in self.predecessors:
                     out = pred.forward(self, x)
                     if out is not None:
-                        return out[0], out[1]
+                        return x
 
     def random_initialisation(self):
         # Allows overriding by necessary base classes, else does nothing
@@ -159,20 +158,24 @@ class InputNode(Node):
         self.name = 'Input Node'
 
     def _initialise(self):
+        self.model = self.get_model()
         self.initialised = True
 
     def __repr__(self) -> str:
         rep = (
-            f'{type(self).__name__}(\n'
-            f'\t node_id={self.node_id},\n'
-            f'\t channels={self.in_channels},\n'
-            f'\t height={self.in_height},\n'
-            f'\t width={self.in_width},\n'
-            # f'\t [predecessors=[{self.predecessors}]],\n'
-            # f'\t [successors=[{self.successors}]]\n'
-            f'\t )'
+            f'{type(self).__name__}('
+            f'node_id={self.node_id}, '
+            f'channels={self.in_channels}, '
+            f'height={self.in_height}, '
+            f'width={self.in_width}, '
+            # f'[predecessors=[{self.predecessors}]],\n'
+            # f'[successors=[{self.successors}]]\n'
+            f')'
         )
         return rep
+
+    def get_model(self):
+        return InputBlock()
 
     def forward(self, tensor: torch.Tensor):
         for pred in self.predecessors:
@@ -183,6 +186,7 @@ class InputNode(Node):
 
 class OutputNode(Node):
     FEATURE_LIMIT = 10000
+
     def __init__(self, classes: int):
         node_id = -1
         super().__init__(node_id)
@@ -196,43 +200,31 @@ class OutputNode(Node):
 
     def __repr__(self) -> str:
         rep = (
-            f'{type(self).__name__}(\n'
-            f'\t node_id={self.node_id},\n'
-            f'\t out_features={self.out_features},\n'
-            f'\t classes={self.classes},\n'
-            f'\t width={self.in_width},\n'
-            f'\t [successors={self.get_successor_id()}]\n'
-            f'\t )'
+            f'{type(self).__name__}('
+            f'node_id={self.node_id}, '
+            f'out_features={self.out_features}, '
+            f'classes={self.classes}, '
+            f'width={self.in_width}, '
+            f'[successors={self.get_successor_id()}] '
+            f')'
         )
         return rep
 
     def _initialise(self):
-        #arbitrary choice on these
-        self.out_features = np.random.randint(self.classes**2, self.FEATURE_LIMIT)
+        # arbitrary choice on these
+        self.out_features = np.random.randint(self.classes ** 2, self.FEATURE_LIMIT)
         self.dropout_rate = np.random.uniform(high=0.5)
 
-        self.model = self.get_function()
+        self.model = self.get_model()
         self.initialised = True
 
-    def get_function(self):
-        def output_block(value_dict):
-            x = list(value_dict.values())[0]
-            x = torch.flatten(x, 1)
-            x = nn.Linear(
-                in_features=x.shape[1],
-                out_features=self.out_features
-            )(x)
-            x = F.relu(x)
-            x = nn.Dropout(
-                p=self.dropout_rate
-            )(x)
-            x = nn.Linear(
-                in_features=self.out_features,
-                out_features=self.classes
-            )(x)
-            return x
-
-        return output_block
+    def get_model(self):
+        params = dict(
+            dropout_rate = self.dropout_rate,
+            out_features = self.out_features,
+            classes = self.classes,
+        )
+        return OutBlock(**params)
 
 
 class KernelNode(Node):
@@ -278,7 +270,8 @@ class KernelNode(Node):
 
         self._calculate_out_params()
 
-        self.model = self.get_function()
+        self.model = self.get_model()
+        super().add_module(f'{self.node_id}:{self.name}', self.model)
 
 
 class ConvNode(KernelNode):
@@ -296,34 +289,16 @@ class ConvNode(KernelNode):
         self.out_channels = np.random.choice(ConvNode.CHANNEL_CHOICES).item()
         self.pad_mode = np.random.choice(ConvNode.PAD_MODES).item()
 
-    def get_function(self):
-        def conv_block(value_dict):
-            x = list(value_dict.values())[0]
-            kernel = self.kernel
-            if kernel > x.shape[2]:
-                if x.shape.item() % 2:
-                    kernel = x.shape - 1
-                else:
-                    kernel = x.shape - 2
-                if not kernel:
-                    kernel = 1
-
-            x = nn.Conv2d(
-                in_channels=x.shape[1],
-                out_channels=self.out_channels,
-                kernel_size=kernel,
-                padding=self.padding,
-                padding_mode=self.pad_mode,
-                dilation=self.dilation,
-                stride=self.stride
-            )(x)
-            x = F.relu(x)
-            x = nn.BatchNorm2d(
-                num_features=self.out_channels
-            )(x)
-            return x
-
-        return conv_block
+    def get_model(self):
+        params = dict(
+            out_channels=self.out_channels,
+            padding=self.padding,
+            pad_mode=self.pad_mode,
+            dilation=self.dilation,
+            stride=self.stride,
+            kernel=self.kernel,
+        )
+        return ConvBlock(**params)
 
 
 class PoolNode(KernelNode):
@@ -338,17 +313,11 @@ class PoolNode(KernelNode):
         super()._random_initialisation()
         self.kernel = np.random.choice(PoolNode.KERNEL_CHOICES).item()
 
-    def _get_function(self, pool_func: Union[Type[nn.MaxPool2d], Type[nn.AvgPool2d]], kwargs: Dict = {}):
-        def pool(value_dict):
-            x = pool_func(
-                kernel_size=self.kernel,
-                padding=self.padding,
-                stride=self.stride,
-                **kwargs
-            )(list(value_dict.values())[0])
-            return x
-
-        return pool
+    @staticmethod
+    def _get_model(pool_func: Union[Type[nn.MaxPool2d], Type[nn.AvgPool2d]], kwargs: Dict = None):
+        if kwargs is None:
+            kwargs = {}
+        return PoolBlock(pool_func, kwargs)
 
     def _pre_initialise(self):
         self.out_channels = self.in_channels
@@ -360,11 +329,14 @@ class MaxPoolNode(PoolNode):
         super().__init__(node_id)
         self.name = 'MaxPool Node'
 
-    def get_function(self):
+    def get_model(self):
         params = dict(
             dilation=self.dilation,
+            kernel_size=self.kernel,
+            padding=self.padding,
+            stride=self.stride,
         )
-        return self._get_function(pool_func=nn.MaxPool2d, kwargs=params)
+        return self._get_model(pool_func=nn.MaxPool2d, kwargs=params)
 
 
 class AvgPoolNode(PoolNode):
@@ -373,8 +345,13 @@ class AvgPoolNode(PoolNode):
         super().__init__(node_id)
         self.name = 'Average Pool Node'
 
-    def get_function(self):
-        return self._get_function(pool_func=nn.AvgPool2d)
+    def get_model(self):
+        params = dict(
+            kernel_size=self.kernel,
+            padding=self.padding,
+            stride=self.stride,
+        )
+        return self._get_model(pool_func=nn.AvgPool2d, kwargs=params)
 
 
 class BinaryNode(Node):
@@ -400,7 +377,8 @@ class BinaryNode(Node):
     def equal_size_input(self) -> bool:
         if self.num_inputs < 2:
             return True
-        shapes = [[v for v in self.in_width.values()], [v for v in self.in_height.values()]]
+        shapes = [[v for v in self.in_width.values()], \
+                  [v for v in self.in_height.values()]]
         for d1, d2 in shapes:
             if d1 != d2:
                 return False
@@ -466,7 +444,7 @@ class BinaryNode(Node):
             else:
                 self.consolidated_processing_stack[input_node_id] = lambda x: x
 
-    def _pre_initialise(self):
+    def _pre_initialise(self, block):
         for suc in self.successors:
             self.in_channels[suc.node_id] = suc.out_channels
             self.in_height[suc.node_id] = suc.out_height
@@ -475,9 +453,18 @@ class BinaryNode(Node):
 
         self.set_max_channels()
         self.set_output_shape()
+        self.get_processing_stack()
+        self.consolidate_processing_stack()
+        self.model = self.get_model(block)
+        super().add_module(f'{self.node_id}:{self.name}', self.model)
 
-    def _initialise(self):
-        self._pre_initialise()
+
+    def get_model(self, block):
+        params = dict(
+            consolidated_processing_stack=self.consolidated_processing_stack,
+            num_inputs=self.num_inputs,
+        )
+        return block(**params)
 
 
 class SumNode(BinaryNode):
@@ -486,7 +473,6 @@ class SumNode(BinaryNode):
         super().__init__(node_id)
         self.name = 'Sum Node'
 
-    # this needs to be child node dependent
     def get_processing_stack(self):
 
         if not self.equal_size_input():
@@ -496,22 +482,7 @@ class SumNode(BinaryNode):
             self.add_channel_to_smaller_input_stack()
 
     def _initialise(self):
-        self._pre_initialise()
-        self.get_processing_stack()
-        self.consolidate_processing_stack()
-        self.model = self.get_function()
-
-    def get_function(self):
-        if self.num_inputs > 1:
-            def sum_block(kwargs):
-                tensor = [self.consolidated_processing_stack[k](v) for k, v in kwargs.items()]
-                return sum(tensor)
-        else:
-            def sum_block(x):
-                return x
-
-        return sum_block
-
+        self._pre_initialise(SumBlock)
 
 class ConcatNode(BinaryNode):
 
@@ -525,19 +496,6 @@ class ConcatNode(BinaryNode):
             self.add_resize_to_larger_input_stack()
 
     def _initialise(self):
-        self._pre_initialise()
-        self.get_processing_stack()
-        self.consolidate_processing_stack()
-        self.model = self.get_function()
+        self._pre_initialise(ConcatBlock)
 
-    def get_function(self):
-        if self.num_inputs > 1:
-            def concat_block(kwargs):
-                tensor = [self.consolidated_processing_stack[k](v) for k, v in kwargs.items()]
-                # a = self.consolidated_processing_stack[0](a)
-                # b = self.consolidated_processing_stack[1](b)
-                return torch.cat(tensor, dim=1)
-        else:
-            def concat_block(x):
-                return x
-        return concat_block
+

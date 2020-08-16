@@ -1,24 +1,18 @@
-import numpy as np
 from queue import Queue
-from collections import defaultdict
-import networkx as nx
-from networkx import DiGraph
-from typing import Union, List, Callable, Dict, Type, Tuple
-
-import torch
-
-
-# from src.genotype.base_pairs import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
-#     BinaryNode, PoolNode, OutputNode
-
-
-from .base_pairs import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
-    BinaryNode, PoolNode, OutputNode
+from typing import Union, List, Dict, Tuple
 
 import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import torch
+import torch.nn as nn
+from networkx import DiGraph
+
+from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+    BinaryNode, PoolNode, OutputNode
 
 
-class RandomArchitectureGenerator:
+class RandomArchitectureGenerator(nn.Module):
     MAX_DEPTH = 100
     MIN_DEPTH = 5
     MIN_NODES = 5
@@ -29,6 +23,8 @@ class RandomArchitectureGenerator:
 
     def __init__(self, prediction_classes:int, min_depth=MIN_DEPTH, max_depth=MAX_DEPTH, min_nodes: int=MIN_NODES,
                  image_size: Union[int, tuple, list] = DEFAULT_IMAGE_SIZE, input_channels: int = IMAGE_CHANNELS):
+
+        super(RandomArchitectureGenerator, self).__init__()
         self.min_depth = min_depth
         self.max_depth = max_depth
         self.min_nodes = min_nodes
@@ -71,6 +67,8 @@ class RandomArchitectureGenerator:
 
         self.add_new_node(output_node)
         self.add_new_node(root_node, predecessor_id=output_node.node_id)
+
+        self._module_dict = nn.ModuleDict()
 
     @staticmethod
     def new_node_id(start_node=1, step=1):
@@ -187,7 +185,7 @@ class RandomArchitectureGenerator:
 
         return node
 
-    def get_architecture(self, reset_on_finish=True) -> Tuple[DiGraph, Dict[int, Node], Node]:
+    def get_architecture(self, reset_on_finish=False) -> Tuple[DiGraph, Dict[int, Node], Node]:
 
         while not self.queue.empty():
             node_id, current_level = self.queue.get()
@@ -227,16 +225,35 @@ class RandomArchitectureGenerator:
         self.contract_input_nodes()
         self.update_nodes()
 
-        # Now that the graph is complete, the nodes can be initialised
-        network_entry_point = self.node_reference[self.input_nodes]
-        network_entry_point.initialise()
 
-        retval = (self.graph, self.node_reference, network_entry_point)
+        # Now that the graph is complete, the nodes can be initialised
+        self.initialise_nodes()
+
+        self.compile_model()
+
+        retval = (self.graph, self.node_reference)
 
         if reset_on_finish:
             self.reset()
 
         return retval
+
+    def initialise_nodes(self):
+        self.node_reference[self.input_nodes].initialise()
+
+    def forward(self, x):
+        return self.node_reference[self.input_nodes](x)
+
+    def compile_model(self):
+        model_list = []
+        for k, v in self.node_reference.items():
+            if isinstance(v, InputNode):
+                input_name, input_node = f'{k}:{v.name}', v.model
+            else:
+                model_list.append([f'{k}:{v.name}', v.model])
+        model_list.append([input_name, input_node])
+        model_list = reversed(model_list)
+        self._module_dict.update(model_list)
 
     def check_input_nodes(self):
         if not self.input_nodes:
@@ -331,13 +348,10 @@ class RandomArchitectureGenerator:
             image_size=image_size
         )
 
-    @staticmethod
-    def show(graph, node_reference=None, labels='type'):
+    def show(self, labels='type'):
         if labels == 'both' or labels == 'type':
-            assert node_reference is not None, 'labels=[\'both\' \'type\']  requires a non NoneType attribute map'
-
-            relabel_mapping = {k: v.node_name() for k, v in node_reference.items()}
-            computational_graph = nx.relabel_nodes(graph, relabel_mapping, )
+            relabel_mapping = {k: v.node_name() for k, v in self.node_reference.items()}
+            computational_graph = nx.relabel_nodes(self.graph, relabel_mapping, )
             options = {'node_size': 2000, 'alpha': 0.7}
             if labels == 'both':
                 plt.figure(figsize=(15, 8))
@@ -346,8 +360,8 @@ class RandomArchitectureGenerator:
                 nx.draw(computational_graph, pos, with_labels=True, **options)
 
                 plt.subplot(122)
-                pos = nx.spiral_layout(graph, )
-                nx.draw(graph, with_labels=True)
+                pos = nx.spiral_layout(self.graph, )
+                nx.draw(self.graph, with_labels=True)
 
             else:
                 plt.figure(figsize=(15, 8))
@@ -357,22 +371,22 @@ class RandomArchitectureGenerator:
         else:
             plt.figure(figsize=(15, 8))
             plt.subplot()
-            nx.draw(graph, with_labels=True)
+            nx.draw(self.graph, with_labels=True)
 
         plt.show()
 
 
-# if __name__ == '__main__':
-#     image_size = (128, 128)
-#     rag = RandomArchitectureGenerator(prediction_classes=10, min_depth=5, max_depth=7, image_size=28, input_channels=1, min_nodes=5)
-#     g = None
-#     while g is None:
-#         g, a, network = rag.get_architecture()
-#
-#     rag.show(g.reverse(), a, labels='both')
-#
-#     out = network(torch.rand(1, 1, 28, 28))
-#
-#     out
+if __name__ == '__main__':
+    image_size = (128, 128)
+    rag = RandomArchitectureGenerator(prediction_classes=10, min_depth=5, max_depth=7, image_size=28, input_channels=1, min_nodes=5)
+    g = None
+    while g is None:
+        g, a = rag.get_architecture()
+
+    rag.show(g.reverse(), a, labels='both')
+
+    out = rag(torch.rand(1, 1, 28, 28))
+
+    out
 
 
