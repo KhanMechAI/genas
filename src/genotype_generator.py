@@ -341,7 +341,7 @@ def initialise_archs(min_depth=3, max_depth=100):
                 if new_node is None:
                     S.add(node)
                     # graph.add_node(node_counter)
-                    # attribute_map[node_counter] = new_node
+                    # node_reference[node_counter] = node_id
                 else:
                     attribute_map[node_counter] = new_node
                     graph.add_node(node_counter)
