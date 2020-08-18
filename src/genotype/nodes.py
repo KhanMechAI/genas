@@ -73,8 +73,6 @@ class Node(nn.Module):
         rep = (
             f'{type(self).__name__}('
             f'node_id={self.node_id}, '
-            # f'\t [predecessors=[{self.predecessors}]],\n'
-            # f'\t [successors=[{self.successors}]]\n'
             f')'
         )
         return rep
@@ -99,14 +97,19 @@ class Node(nn.Module):
 
         if self.inputs_full():
             x = self.model(self.inputs)
+            # print(f'Just ran through: {self.node_name()}')
             if self.terminal:
-                print(self)
+                # print(f'Arrived at {self.node_name()} - Returning too {node.node_name()}')
+                # print(f'Return size: {x.shape}')
                 return x
             else:
                 for pred in self.predecessors:
                     out = pred.forward(self, x)
                     if out is not None:
-                        return x
+                        # print(f'Arrived at {self.node_name()}')
+                        # print(f'Now returning from {pred.node_name()} - Heading too {node.node_name()}')
+                        # print(f'Return size: {out.shape}')
+                        return out
 
     def random_initialisation(self):
         # Allows overriding by necessary base classes, else does nothing
@@ -168,8 +171,6 @@ class InputNode(Node):
             f'channels={self.in_channels}, '
             f'height={self.in_height}, '
             f'width={self.in_width}, '
-            # f'[predecessors=[{self.predecessors}]],\n'
-            # f'[successors=[{self.successors}]]\n'
             f')'
         )
         return rep

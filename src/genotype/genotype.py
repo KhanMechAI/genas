@@ -11,6 +11,8 @@ from networkx import DiGraph
 from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
     BinaryNode, PoolNode, OutputNode
 
+# from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+#     BinaryNode, PoolNode, OutputNode
 
 class RandomArchitectureGenerator(nn.Module):
     MAX_DEPTH = 100
@@ -383,7 +385,7 @@ if __name__ == '__main__':
     while g is None:
         g, a = rag.get_architecture()
 
-    rag.show(g.reverse(), a, labels='both')
+    rag.show(labels='both')
 
     out = rag(torch.rand(1, 1, 28, 28))
 

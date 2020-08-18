@@ -19,6 +19,7 @@ class OutBlock(nn.Module):
         self.dropout_rate = dropout_rate
         self.out_features = out_features
         self.classes = classes
+        self.registered = False
 
     def forward(self, value_dict):
         v = list(value_dict.values())[0]
@@ -36,11 +37,14 @@ class OutBlock(nn.Module):
                 in_features=self.out_features,
                 out_features=self.classes
             ),
+
         )
-
-        super(OutBlock, self).add_module(str(np.random.randint(0, 10000, size=1)), model)
-
-        return model(v)
+        if not self.registered:
+            super(OutBlock, self).add_module(str(np.random.randint(0, 10000, size=1)), model)
+            self.registered = True
+        v = model(v)
+        v = F.softmax(v)
+        return v
 
 
 class ConvBlock(nn.Module):
@@ -52,6 +56,7 @@ class ConvBlock(nn.Module):
         self.dilation = dilation
         self.stride = stride
         self.kernel = kernel
+        self.registered = False
 
     def forward(self, value_dict):
         x = list(value_dict.values())[0]
@@ -79,8 +84,9 @@ class ConvBlock(nn.Module):
                 num_features=self.out_channels
             ),
         )
-        super(ConvBlock, self).add_module(str(np.random.randint(0, 10000, size=1)), model)
-
+        if not self.registered:
+            super(ConvBlock, self).add_module(str(np.random.randint(0, 10000, size=1)), model)
+            self.registered = True
         return model(x)
 
 
