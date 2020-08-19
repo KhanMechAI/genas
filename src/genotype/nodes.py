@@ -279,7 +279,7 @@ class KernelNode(Node):
 
 class ConvNode(KernelNode):
     ARITY = 1
-    PAD_MODES = ('zeros', 'reflect', 'replicate', 'circular')
+    PAD_MODES = ('zeros', 'replicate', 'circular')
     CHANNEL_CHOICES = (32, 64, 128, 256, 512)
 
     def __init__(self, node_id: int, ):
