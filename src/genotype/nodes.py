@@ -20,7 +20,7 @@ class Node(nn.Module):
         self.predecessors: List[Node] = predecessors  # where the results get pushed to
         self.successors: List[Node] = successors  # recieving inputs from
 
-        self.inputs: Dict[int, torch.Tensor] = dict()  # list to store actual input values
+        self.inputs: Dict[str, torch.Tensor] = dict()  # list to store actual input values
         self.processed_inputs: Dict[str, torch.Tensor] = dict()  # list to store actual input values
 
         # need to adjust how lists are handled for sum and concat node
@@ -44,6 +44,8 @@ class Node(nn.Module):
         self.initialised: bool = False
 
         self.name = 'Base Class Node'
+
+        self.id_name = f'{self.node_id}:{self.name.replace(" ", "_")}'
 
         self.terminal = self.node_id == -1
 
@@ -93,7 +95,7 @@ class Node(nn.Module):
         return len(self.inputs.keys()) == self.num_inputs
 
     def forward(self, node: Node, tensor: torch.Tensor):
-        self.inputs[node.node_id] = tensor
+        self.inputs[node.id_name] = tensor
 
         if self.inputs_full():
             x = self.model(self.inputs)
@@ -221,9 +223,9 @@ class OutputNode(Node):
 
     def get_model(self):
         params = dict(
-            dropout_rate = self.dropout_rate,
-            out_features = self.out_features,
-            classes = self.classes,
+            dropout_rate=self.dropout_rate,
+            out_features=self.out_features,
+            classes=self.classes,
         )
         return OutBlock(**params)
 
@@ -362,13 +364,15 @@ class BinaryNode(Node):
         super().__init__(node_id)
         self.output_shape: tuple = ()
         self.arity = 2
-        self.in_channels: Dict[int, int] = dict()
-        self.in_height: Dict[int, int] = dict()
-        self.in_width: Dict[int, int] = dict()
-        self.in_sizes: Dict[int, int] = dict()
+        self.in_channels: Dict[str, int] = dict()
+        self.in_height: Dict[str, int] = dict()
+        self.in_width: Dict[str, int] = dict()
+        self.in_sizes: Dict[str, int] = dict()
 
-        self.processing_stack: Dict[int, List[Callable]] = defaultdict(list)
-        self.consolidated_processing_stack: Dict[int, Callable] = {}
+        self.max_channels = None
+
+        self.processing_stack: Dict[str, nn.ModuleList] = defaultdict(nn.ModuleList)
+        self.consolidated_processing_stack: Dict[str, Callable] = {}
 
         self.name = 'Binary Class Node'
 
@@ -385,17 +389,14 @@ class BinaryNode(Node):
                 return False
         return True
 
-    def shape_ids(self) -> Tuple[int, int]:
+    def shape_ids(self) -> Tuple[str, str]:
         # smallest input is defined as min(w*h) of all inputs
         return min(self.in_sizes, key=self.in_sizes.get), max(self.in_sizes, key=self.in_sizes.get)
 
-    def resize_func(self, smaller_id) -> Callable:
+    def resize_func(self, smaller_id) -> nn.Module:
         resize_shape = (self.in_height[smaller_id], self.in_width[smaller_id])
 
-        def resize(x):
-            return F.interpolate(x, resize_shape)
-
-        return resize
+        return torch.nn.Upsample(resize_shape, mode='bilinear')
 
     def add_resize_to_larger_input_stack(self):
         smaller_id, larger_id = self.shape_ids()
@@ -408,15 +409,19 @@ class BinaryNode(Node):
         smaller_id, larger_id = self.channel_ids()
         num_channels = max(self.in_channels.values()) - min(self.in_channels.values())
 
-        def pad(tensor: torch.Tensor):
-            shape = (tensor.shape[0], num_channels, tensor.shape[2], tensor.shape[3])
-            # concatentate zero_layers to smaller tensor
-            return torch.cat((tensor, torch.zeros(shape)), 1)
+        class PadModule(nn.Module):
+            def __init__(self, channels):
+                super(PadModule, self).__init__()
+                self.channels = channels
+
+            def forward(self, tensor: torch.Tensor):
+                shape = (tensor.shape[0], self.channels, tensor.shape[2], tensor.shape[3])
+                return torch.cat((tensor, torch.zeros(shape)), 1)
 
         # Pad the smaller tensor with zeros
-        self.processing_stack[smaller_id].append(pad)
+        self.processing_stack[smaller_id].append(PadModule(num_channels))
 
-    def channel_ids(self) -> Tuple[int, int]:
+    def channel_ids(self) -> Tuple[str, str]:
         return min(self.in_channels, key=self.in_channels.get), max(self.in_channels, key=self.in_channels.get)
 
     def set_output_shape(self):
@@ -427,38 +432,46 @@ class BinaryNode(Node):
         self.out_width = output_shape[3]
         self.output_shape = output_shape
 
-    # from: https://stackoverflow.com/questions/16739290/composing-functions-in-python
-    @staticmethod
-    def _compose(f, g):
-        return lambda arg: f(g(arg))
+    def make_subclass(self, module_list):
+        class sub_module(nn.Module):
+            def __init__(self, module_list: nn.ModuleList):
+                super(sub_module, self).__init__()
+                self.module_list = module_list
+                self.trace = []  # not sure why doing this, but saw someone else doing it
+                for mod in self.module_list:
+                    for param in mod.parameters():
+                        param.requires_grad = False
 
-    # from: https://stackoverflow.com/questions/16739290/composing-functions-in-python
-    @staticmethod
-    def reduce_compose(*fs):
-        return reduce(BinaryNode._compose, fs)
+            def forward(self, x):
+                for l in self.module_list:
+                    x = l(x)
+                    self.trace.append(x)
+                return x
+
+        return sub_module(module_list)
 
     def consolidate_processing_stack(self):
-        for input_node_id in self.get_successor_id():
-            if self.processing_stack[input_node_id]:
-                self.consolidated_processing_stack[input_node_id] \
-                    = self.reduce_compose(*self.processing_stack[input_node_id])
+        for in_node in self.successors:
+            if self.processing_stack[in_node.id_name]:
+                self.consolidated_processing_stack[in_node.id_name] = \
+                    self.make_subclass(self.processing_stack[in_node.id_name])
             else:
-                self.consolidated_processing_stack[input_node_id] = lambda x: x
+                self.consolidated_processing_stack[in_node.id_name] = \
+                    self.make_subclass(nn.ModuleList())
 
     def _pre_initialise(self, block):
         for suc in self.successors:
-            self.in_channels[suc.node_id] = suc.out_channels
-            self.in_height[suc.node_id] = suc.out_height
-            self.in_width[suc.node_id] = suc.out_width
-            self.in_sizes[suc.node_id] = suc.out_width * suc.out_height
+            self.in_channels[suc.id_name] = suc.out_channels
+            self.in_height[suc.id_name] = suc.out_height
+            self.in_width[suc.id_name] = suc.out_width
+            self.in_sizes[suc.id_name] = suc.out_width * suc.out_height
 
         self.set_max_channels()
         self.set_output_shape()
         self.get_processing_stack()
         self.consolidate_processing_stack()
         self.model = self.get_model(block)
-        super().add_module(f'{self.node_id}:{self.name}', self.model)
-
+        super().add_module(self.id_name, self.model)
 
     def get_model(self, block):
         params = dict(
@@ -485,6 +498,7 @@ class SumNode(BinaryNode):
     def _initialise(self):
         self._pre_initialise(SumBlock)
 
+
 class ConcatNode(BinaryNode):
 
     def __init__(self, node_id: int, ):
@@ -498,5 +512,3 @@ class ConcatNode(BinaryNode):
 
     def _initialise(self):
         self._pre_initialise(ConcatBlock)
-
-

@@ -14,7 +14,7 @@ from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, Inpu
 # from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
 #     BinaryNode, PoolNode, OutputNode
 
-class RandomArchitectureGenerator(nn.Module):
+class RandomArchitectureGenerator():
     MAX_DEPTH = 100
     MIN_DEPTH = 5
     MIN_NODES = 5
@@ -187,7 +187,7 @@ class RandomArchitectureGenerator(nn.Module):
 
         return node
 
-    def get_architecture(self, reset_on_finish=False) -> Tuple[DiGraph, Dict[int, Node], Node]:
+    def get_architecture(self, reset_on_finish=False) -> Node:#Tuple[DiGraph, Dict[int, Node], Node]:
 
         while not self.queue.empty():
             node_id, current_level = self.queue.get()
@@ -233,18 +233,18 @@ class RandomArchitectureGenerator(nn.Module):
 
         self.compile_model()
 
-        retval = (self.graph, self.node_reference)
+        # retval = (self.graph, self.node_reference)
 
         if reset_on_finish:
             self.reset()
 
-        return retval
+        return self.node_reference[self.input_nodes]
 
     def initialise_nodes(self):
         self.node_reference[self.input_nodes].initialise()
 
-    def forward(self, x):
-        return self.node_reference[self.input_nodes](x)
+    # def forward(self, x):
+    #     return self.node_reference[self.input_nodes](x)
 
     def compile_model(self):
         model_list = []
