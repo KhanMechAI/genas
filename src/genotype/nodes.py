@@ -45,9 +45,13 @@ class Node(nn.Module):
 
         self.name = 'Base Class Node'
 
-        self.id_name = f'{self.node_id}:{self.name.replace(" ", "_")}'
+        # self._id_name = ''
 
         self.terminal = self.node_id == -1
+
+    @property
+    def id_name(self):
+        return f'{self.node_id}:{self.name.replace(" ", "_")}'
 
     def __str__(self):
         k = 4
@@ -99,6 +103,7 @@ class Node(nn.Module):
 
         if self.inputs_full():
             x = self.model(self.inputs)
+            self.inputs = {}
             # print(f'Just ran through: {self.node_name()}')
             if self.terminal:
                 # print(f'Arrived at {self.node_name()} - Returning too {node.node_name()}')
@@ -144,6 +149,23 @@ class Node(nn.Module):
     def get_predecessor_id(self):
         return [pred.node_id for pred in self.predecessors]
 
+    def out_features(self):
+        return self.out_width * self.out_height * self.out_channels
+
+    def local_params(self):
+        params = {}
+        for k,v in vars(self).items():
+            if not k.startswith('_'):
+                if isinstance(v, int):
+                    params[k] = v
+
+        return params
+
+    def verify_parameters(self):
+        for k,v in self.local_params().items():
+            if v <= 0:
+                print(f'Warning: Negative or zero parameter. {k}: {v}')
+
 
 class InputNode(Node):
 
@@ -159,11 +181,11 @@ class InputNode(Node):
         self.out_width: int = self.in_width
         self.arity = 0
         self._initialise()
+        self.model = nn.Identity()
 
         self.name = 'Input Node'
 
     def _initialise(self):
-        self.model = self.get_model()
         self.initialised = True
 
     def __repr__(self) -> str:
@@ -177,10 +199,8 @@ class InputNode(Node):
         )
         return rep
 
-    def get_model(self):
-        return InputBlock()
-
     def forward(self, tensor: torch.Tensor):
+        tensor = self.model(tensor)
         for pred in self.predecessors:
             x = pred.forward(self, tensor)
             if x is not None:
@@ -193,11 +213,11 @@ class OutputNode(Node):
     def __init__(self, classes: int):
         node_id = -1
         super().__init__(node_id)
-
+        self.in_features: int = None
         self.out_features: int = None
         self.classes = classes
         self.arity = 0
-        self._initialise()
+        # self._initialise()
 
         self.name = 'Output Node'
 
@@ -218,6 +238,8 @@ class OutputNode(Node):
         self.out_features = np.random.randint(self.classes ** 2, self.FEATURE_LIMIT)
         self.dropout_rate = np.random.uniform(high=0.5)
 
+        self.in_features = self.successors[0].out_features()
+
         self.model = self.get_model()
         self.initialised = True
 
@@ -226,6 +248,7 @@ class OutputNode(Node):
             dropout_rate=self.dropout_rate,
             out_features=self.out_features,
             classes=self.classes,
+            in_features=self.in_features,
         )
         return OutBlock(**params)
 
@@ -269,12 +292,23 @@ class KernelNode(Node):
         self.in_channels = successor.out_channels
         self.in_height = successor.out_height
         self.in_width = successor.out_width
+
+        if self.kernel > self.in_width:
+            if self.in_width % 2:
+                self.kernel = self.in_width - 1
+            else:
+                self.kernel = self.in_width - 2
+            if self.kernel < 1:
+                self.kernel = 1
+
+        self.verify_parameters()
+
         self._pre_initialise()
 
         self._calculate_out_params()
 
         self.model = self.get_model()
-        super().add_module(f'{self.node_id}:{self.name}', self.model)
+        super().add_module(self.id_name, self.model)
 
 
 class ConvNode(KernelNode):
@@ -294,12 +328,15 @@ class ConvNode(KernelNode):
 
     def get_model(self):
         params = dict(
+            in_channels=self.in_channels,
             out_channels=self.out_channels,
+            in_width=self.in_width,
             padding=self.padding,
             pad_mode=self.pad_mode,
             dilation=self.dilation,
             stride=self.stride,
             kernel=self.kernel,
+            id_name=self.id_name,
         )
         return ConvBlock(**params)
 
@@ -409,13 +446,16 @@ class BinaryNode(Node):
         smaller_id, larger_id = self.channel_ids()
         num_channels = max(self.in_channels.values()) - min(self.in_channels.values())
 
+
         class PadModule(nn.Module):
             def __init__(self, channels):
                 super(PadModule, self).__init__()
                 self.channels = channels
+                self.trace = []
 
             def forward(self, tensor: torch.Tensor):
                 shape = (tensor.shape[0], self.channels, tensor.shape[2], tensor.shape[3])
+                self.trace.append(tensor)
                 return torch.cat((tensor, torch.zeros(shape)), 1)
 
         # Pad the smaller tensor with zeros
@@ -497,6 +537,8 @@ class SumNode(BinaryNode):
 
     def _initialise(self):
         self._pre_initialise(SumBlock)
+        # _, larger_id = self.channel_ids()
+        # # self.out_channels = 2 * self.in_channels[larger_id]
 
 
 class ConcatNode(BinaryNode):
@@ -512,3 +554,5 @@ class ConcatNode(BinaryNode):
 
     def _initialise(self):
         self._pre_initialise(ConcatBlock)
+
+        self.out_channels = sum(self.in_channels.values())

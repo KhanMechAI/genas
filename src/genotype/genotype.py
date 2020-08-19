@@ -11,6 +11,7 @@ from networkx import DiGraph
 from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
     BinaryNode, PoolNode, OutputNode
 
+
 # from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
 #     BinaryNode, PoolNode, OutputNode
 
@@ -20,10 +21,11 @@ class RandomArchitectureGenerator():
     MIN_NODES = 5
     MAX_ITER = 100
     NODE_TYPES = {'BINARY', 'CONV', 'POOL', 'INPUT', 'REFERENCE'}
+
     IMAGE_CHANNELS = 3
     DEFAULT_IMAGE_SIZE = 128  # 128x128 assuming square
 
-    def __init__(self, prediction_classes:int, min_depth=MIN_DEPTH, max_depth=MAX_DEPTH, min_nodes: int=MIN_NODES,
+    def __init__(self, prediction_classes: int, min_depth=MIN_DEPTH, max_depth=MAX_DEPTH, min_nodes: int = MIN_NODES,
                  image_size: Union[int, tuple, list] = DEFAULT_IMAGE_SIZE, input_channels: int = IMAGE_CHANNELS):
 
         super(RandomArchitectureGenerator, self).__init__()
@@ -71,13 +73,14 @@ class RandomArchitectureGenerator():
         self.add_new_node(root_node, predecessor_id=output_node.node_id)
 
         self._module_dict = nn.ModuleDict()
+        self.network_map = nn.ModuleDict()
 
     @staticmethod
     def new_node_id(start_node=1, step=1):
-        n=start_node
+        n = start_node
         while True:
             yield n
-            n +=step
+            n += step
 
     @property
     def pool_count(self):
@@ -89,7 +92,7 @@ class RandomArchitectureGenerator():
             return 1
         else:
             # Random node from 1 to num nodes, so that the output node isnt selected
-            return np.random.choice(range(1, num_nodes-1))
+            return np.random.choice(range(1, num_nodes - 1))
 
     def connected_to_input(self, node) -> bool:
         connections = self.graph.neighbors(node)
@@ -115,7 +118,7 @@ class RandomArchitectureGenerator():
 
     def create_new_node(self, node_type, node_id=None):
         if node_id is None:
-            #allows for reassignment of nodes, otherwise, yield new node number
+            # allows for reassignment of nodes, otherwise, yield new node number
             node_id = next(self.next_node_id)
         if node_type == 'SUM':
             new_node = SumNode(node_id, )
@@ -172,10 +175,10 @@ class RandomArchitectureGenerator():
 
     def add_new_node(self, node_type: Union[str, Node], predecessor_id: int = None):
 
-        #Check if the node is already created. Therefore would already ahve a node ID
+        # Check if the node is already created. Therefore would already ahve a node ID
         if isinstance(node_type, Node):
             node = node_type
-        #Else we yield a new ID and create the node
+        # Else we yield a new ID and create the node
         else:
             node = self.create_new_node(node_type=node_type)
 
@@ -187,8 +190,8 @@ class RandomArchitectureGenerator():
 
         return node
 
-    def get_architecture(self, reset_on_finish=False) -> Node:#Tuple[DiGraph, Dict[int, Node], Node]:
-
+    def get_architecture(self, reset_on_finish=False) -> Union[int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
+        current_level = 0
         while not self.queue.empty():
             node_id, current_level = self.queue.get()
             arity = self.node_reference[node_id].arity
@@ -219,7 +222,7 @@ class RandomArchitectureGenerator():
         if current_level < self.min_depth and len(self.graph.nodes) < self.min_nodes:
             print('Degenerate Graph or less than min depth. Resetting')
             self.reset()
-            return None, None, None
+            return None
 
         self.check_input_nodes()
         self.add_missing_edges()
@@ -227,35 +230,54 @@ class RandomArchitectureGenerator():
         self.contract_input_nodes()
         self.update_nodes()
 
-
         # Now that the graph is complete, the nodes can be initialised
         self.initialise_nodes()
 
         self.compile_model()
 
-        # retval = (self.graph, self.node_reference)
+
 
         if reset_on_finish:
             self.reset()
+            return -1
 
-        return self.node_reference[self.input_nodes]
+        return self.controller()
+
+    def entry_point_name(self):
+        return self.node_reference[self.input_nodes].id_name
 
     def initialise_nodes(self):
         self.node_reference[self.input_nodes].initialise()
 
-    # def forward(self, x):
-    #     return self.node_reference[self.input_nodes](x)
+    def controller(self):
+        class Controller(nn.Module):
+            def __init__(self, module_dict, network_map, entry_point, ):
+                super(Controller, self).__init__()
+                self.module_dict = module_dict #to register parameters
+                self.network_map = network_map #register of all nodes
+                self.entry_point: str = entry_point
+                self.input_node = network_map[entry_point]#to enter the model
+
+            def forward(self, x):
+                x = self.input_node(x)
+                return x
+
+        return Controller(self._module_dict, self.network_map, self.entry_point_name())
 
     def compile_model(self):
         model_list = []
+        network_map = []
         for k, v in self.node_reference.items():
             if isinstance(v, InputNode):
-                input_name, input_node = f'{k}:{v.name}', v.model
+                input_name, input_node = v.id_name, v.model
             else:
-                model_list.append([f'{k}:{v.name}', v.model])
+                model_list.append([v.id_name, v.model])
+
+            network_map.append([v.id_name, v])
         model_list.append([input_name, input_node])
         model_list = reversed(model_list)
         self._module_dict.update(model_list)
+        self.network_map.update(network_map)
 
     def check_input_nodes(self):
         if not self.input_nodes:
@@ -288,6 +310,9 @@ class RandomArchitectureGenerator():
         return
 
     def contract_input_nodes(self):
+        if isinstance(self.input_nodes, int):
+            return
+
         if len(self.input_nodes) < 2:
             self.input_nodes = self.input_nodes[0]
             return
@@ -304,32 +329,39 @@ class RandomArchitectureGenerator():
     def _pool_predecessors(self, node):
         return [x for x in self.graph.predecessors(node) if isinstance(self.node_reference[x], PoolNode)]
 
+    def _prune_pool(self, query_node):
+        connected_pool_nodes = self._pool_predecessors(query_node)
+        break_flag = False
+        if connected_pool_nodes:  # If there is any connected nodes, iterate over them
+            for pool_node in connected_pool_nodes:
+                # get a new conv type to replace the pool node
+                self.node_reference[pool_node] = self.create_new_node(node_type='CONV', node_id=pool_node)
+
+                # remove from list of pool nodes as it is now a conv node
+                self.pool_nodes.remove(pool_node)
+
+                break_flag = self.pool_count < self.max_pool
+                if break_flag:
+                    break
+
+        return break_flag
+
     def prune_pool_nodes(self):
         break_flag = False
         # Prune from the input nodes first
-        for input_node in self.input_nodes:
-            connected_pool_nodes = self._pool_predecessors(input_node)
-            if connected_pool_nodes:  # If there is any connected nodes, iterate over them
-                for pool_node in connected_pool_nodes:
-                    # get a new conv type to replace the pool node
-                    self.node_reference[pool_node] = self.create_new_node(node_type='CONV', node_id=pool_node)
-
-                    # remove from list of pool nodes as it is now a conv node
-                    self.pool_nodes.remove(pool_node)
-
-                    break_flag = self.pool_count < self.max_pool
-
-                    if break_flag:
-                        break
-
-            if break_flag:
-                break
+        if isinstance(self.input_nodes, list):
+            for input_node in self.input_nodes:
+                break_flag = self._prune_pool(input_node)
+                if break_flag:
+                    break
+        else:
+            self._prune_pool(self.input_nodes)
 
     def update_nodes(self):
         for node in self.graph.nodes():
             self.node_reference[node].update_connectivity(self.graph, self.node_reference)
 
-    def reset(self, min_depth: int = None, max_depth: int = None, image_size: int=None, input_channels: int=None):
+    def reset(self, min_depth: int = None, max_depth: int = None, image_size: int = None, input_channels: int = None):
         if min_depth is None:
             min_depth = self.min_depth
 
@@ -380,15 +412,17 @@ class RandomArchitectureGenerator():
 
 if __name__ == '__main__':
     image_size = (128, 128)
-    rag = RandomArchitectureGenerator(prediction_classes=10, min_depth=5, max_depth=7, image_size=28, input_channels=1, min_nodes=5)
-    g = None
-    while g is None:
-        g, a = rag.get_architecture()
+    rag = RandomArchitectureGenerator(prediction_classes=10, min_depth=3, max_depth=5, image_size=28, input_channels=1,
+                                      min_nodes=3)
+    cont = -1
+    while cont == -1:
+        cont = rag.get_architecture()
 
     rag.show(labels='both')
 
-    out = rag(torch.rand(1, 1, 28, 28))
+    # cont = rag.controller()
+
+    in_tensor = torch.rand(1, 1, 28, 28)
+    out = cont(in_tensor)
 
     out
-
-
