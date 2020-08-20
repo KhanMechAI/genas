@@ -19,40 +19,6 @@ class Flatten(nn.Module):
         return x.view(N, -1)
 
 
-class sub_module(nn.Module):
-    def __init__(self, module_list: nn.ModuleList):
-        super(sub_module, self).__init__()
-        self.module_list = module_list
-        self.device = None
-
-        for mod in self.module_list:
-            for param in mod.parameters():
-                param.requires_grad = True
-
-    def forward(self, x):
-        for l in self.module_list:
-            x = l(x)
-        return x
-
-    def update_device(self, device):
-        self.device = device
-
-
-class PadModule(nn.Module):
-    def __init__(self, channels, device='cpu'):
-        super(PadModule, self).__init__()
-        self.channels = channels
-        self.device = device
-
-    def forward(self, tensor: torch.Tensor):
-        shape = list(tensor.shape)
-        shape[1] = self.channels  # TODO: Figure out how to make this before forward pass and move to __init__
-        return torch.cat((tensor, torch.zeros(shape).to(self.device)), 1)
-
-    def update_device(self, device):
-        self.device = device
-
-
 class Node(nn.Module):
 
     def __init__(self, node_id: int, predecessors: List[Node] = [], successors: List[Node] = [], ):
@@ -139,24 +105,9 @@ class Node(nn.Module):
     def inputs_full(self):
         return len(self.inputs.keys()) == self.num_inputs
 
-    # def forward(self, node: Node, tensor: torch.Tensor):
-    #     self.inputs[node.id_name] = tensor
-    #
-    #     if self.inputs_full():
-    #         x = self.model(self.inputs)
-    #         self.inputs = {}
-    #         if self.terminal:
-    #             return x
-    #         else:
-    #             for pred in self.predecessors:
-    #                 out = pred(self, x)
-    #
-    #         return out
-
     def forward(self, tensor):
-        # v = list(value_dict.values())[0]
         v = self.model(tensor)
-        return v, self.successors
+        return v, self.get_predecessor_nid()
 
     def random_initialisation(self):
         # Allows overriding by necessary base classes, else does nothing
@@ -188,6 +139,12 @@ class Node(nn.Module):
 
     def get_predecessor_id(self):
         return [pred.node_id for pred in self.predecessors]
+
+    def get_successor_nid(self):
+        return [suc.id_name for suc in self.successors]
+
+    def get_predecessor_nid(self):
+        return [pred.id_name for pred in self.predecessors]
 
     def out_features(self):
         return self.out_width * self.out_height * self.out_channels
@@ -242,13 +199,6 @@ class InputNode(Node):
         )
         return rep
 
-    def forward(self, tensor: torch.Tensor):
-        tensor = self.model(tensor)
-        for pred in self.predecessors:
-            x = pred(self, tensor)
-
-        return x
-
 
 class OutputNode(Node):
     FEATURE_LIMIT = 10000
@@ -300,16 +250,6 @@ class OutputNode(Node):
             nn.Softmax()
         )
         self.initialised = True
-
-    # def forward(self, _, tensor):
-    #     # v = list(value_dict.values())[0]
-    #     v = self.model(tensor)
-    #     return v, self.successors
-    #
-    def forward(self, _, tensor):
-        # v = list(value_dict.values())[0]
-        v = self.model(tensor)
-        return v, self.successors
 
 
 class KernelNode(Node):
@@ -367,7 +307,6 @@ class KernelNode(Node):
         self._calculate_out_params()
 
         self.get_model()
-        # super().add_module(self.id_name, self.model)
 
 
 class ConvNode(KernelNode):
@@ -403,17 +342,6 @@ class ConvNode(KernelNode):
         )
         return
 
-    def forward(self, node: Node, tensor: torch.Tensor):
-        self.inputs[node.id_name] = tensor
-
-        if self.inputs_full():
-            x = self.model(tensor)
-            self.inputs = {}
-            for pred in self.predecessors:
-                out = pred(self, x)
-
-            return out
-
 
 class PoolNode(KernelNode):
     KERNEL_CHOICES = (2, 2, 2, 2, *KernelNode.KERNEL_CHOICES)  # potentially just override with 2
@@ -435,17 +363,6 @@ class PoolNode(KernelNode):
 
     def _pre_initialise(self):
         self.out_channels = self.in_channels
-
-    def forward(self, node: Node, tensor: torch.Tensor):
-        self.inputs[node.id_name] = tensor
-
-        if self.inputs_full():
-            x = self.model(tensor)
-            self.inputs = {}
-            for pred in self.predecessors:
-                out = pred(self, x)
-
-            return out
 
 
 class MaxPoolNode(PoolNode):
@@ -493,12 +410,12 @@ class BinaryNode(Node):
 
         self.max_channels = None
 
-        self.processing_stack: nn.ModuleDict[str, nn.ModuleList] = nn.ModuleDict()
-        self.consolidated_processing_stack: nn.ModuleDict[str, nn.ModuleList] = {}
+        self.processing_stack: Dict[str, nn.ModuleList] = defaultdict(nn.ModuleList)
 
         self.name = 'Binary Class Node'
 
         self.identity = nn.Identity()
+        self.preprocessors: Dict[str, PreProcessingNode] = dict()
 
     def set_max_channels(self):
         self.max_channels = max(self.in_channels.values())
@@ -547,19 +464,16 @@ class BinaryNode(Node):
         self.out_width = output_shape[3]
         self.output_shape = output_shape
 
-    def make_subclass(self, module_list):
-        return sub_module(module_list)
+    def make_preprocessors(self):
+        for suc in self.successors:
+            node_id = suc.id_name
+            if node_id in self.processing_stack:
+                pre_proc = self.processing_stack[node_id]
+            else:
+                pre_proc = nn.ModuleList([nn.Identity()])
+            self.preprocessors[node_id] = PreProcessingNode(pre_proc)
 
-    # def consolidate_processing_stack(self):
-    #     for in_node in self.successors:
-    #         if self.processing_stack[in_node.id_name]:
-    #             self.consolidated_processing_stack[in_node.id_name] = \
-    #                 self.make_subclass(self.processing_stack[in_node.id_name])
-    #         else:
-    #             self.consolidated_processing_stack[in_node.id_name] = \
-    #                 self.make_subclass(nn.ModuleList())
-
-    def _pre_initialise(self, block):
+    def _pre_initialise(self):
         for suc in self.successors:
             self.in_channels[suc.id_name] = suc.out_channels
             self.in_height[suc.id_name] = suc.out_height
@@ -569,21 +483,7 @@ class BinaryNode(Node):
         self.set_max_channels()
         self.set_output_shape()
         self.get_processing_stack()
-        # self.consolidate_processing_stack()
-        self.model = self.get_model(block)
-        super().add_module(self.id_name, self.model)
-
-    def get_model(self, block):
-        params = dict(
-            consolidated_processing_stack=self.consolidated_processing_stack,
-            num_inputs=self.num_inputs,
-        )
-        return block(**params)
-
-    def update_device(self, device):
-        self.device = device
-        for model in self.consolidated_processing_stack.values():
-            model.update_device(device)
+        self.make_preprocessors()
 
 
 class SumNode(BinaryNode):
@@ -607,30 +507,15 @@ class SumNode(BinaryNode):
                 self.processing_stack[k].append(nn.Identity())
 
     def _initialise(self):
-        self._pre_initialise(SumBlock)
+        self._pre_initialise()
 
-    def forward(self, node, tensor):
-        self.inputs[node.id_name] = tensor
+    def forward(self, *inputs):
+        if len(inputs) > 1:
+            return_tensor = torch.add(*inputs)
+        else:
+            return_tensor = self.identity(*inputs)
 
-        if self.inputs_full():
-            if self.num_inputs > 1:
-                tens_list = []
-                for node_id in self.inputs.keys():
-                    v = self.inputs[node_id]
-                    m_list = self.processing_stack[node_id]
-                    for mod in m_list:
-                        v = mod(v)
-                    tens_list.append(v)
-                # tensor = [self.consolidated_processing_stack[k](v) for k, v in self.inputs.items()]
-                x = torch.add(*tens_list)
-            else:
-                x = self.identity(list(self.inputs.values())[0])
-            self.inputs = {}
-
-            for pred in self.predecessors:
-                out = pred(self, x)
-
-            return out
+        return return_tensor, self.get_predecessor_nid()
 
 
 class ConcatNode(BinaryNode):
@@ -653,26 +538,40 @@ class ConcatNode(BinaryNode):
                 self.processing_stack[k].append(nn.Identity())
 
     def _initialise(self):
-        self._pre_initialise(ConcatBlock)
+        self._pre_initialise()
 
         self.out_channels = sum(self.in_channels.values())
 
-    def forward(self, node, tensor):
-        self.inputs[node.id_name] = tensor
+    def forward(self, *inputs):
+        if len(inputs) > 1:
+            return_tensor = torch.cat(inputs, dim=1, )
+        else:
+            return_tensor = self.identity(*inputs)
 
-        if self.inputs_full():
-            if self.num_inputs > 1:
-                tens_list = []
-                for node_id, m_list in self.processing_stack.items():
-                    v = self.inputs[node_id]
-                    for mod in m_list:
-                        v = mod(v)
-                    tens_list.append(v)
-                x = torch.cat(tens_list, dim=1)
-            else:
-                x = self.identity(list(self.inputs.values())[0])
+        return return_tensor, self.get_predecessor_nid()
 
-            for pred in self.predecessors:
-                out = pred(self, x)
 
-            return out
+class PadModule(nn.Module):
+    def __init__(self, channels):
+        super(PadModule, self).__init__()
+        self.channels = channels
+        self.device = None
+
+    def forward(self, tensor: torch.Tensor):
+        shape = list(tensor.shape)
+        shape[1] = self.channels  # TODO: Figure out how to make this before forward pass and move to __init__
+        return torch.cat((tensor, torch.zeros(shape).to(self.device)), 1)
+
+
+class PreProcessingNode(Node):
+    def __init__(self, module_list: nn.ModuleList):
+        super().__init__(node_id=None)
+        self.module_list = module_list
+        self.device = None
+        self.name = 'Preprocessing Node'
+
+    def forward(self, x):
+        for l in self.module_list:
+            l.device = self.device
+            x = l(x)
+        return x, self.get_predecessor_nid()

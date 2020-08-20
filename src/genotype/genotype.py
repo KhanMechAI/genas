@@ -20,7 +20,7 @@ from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, Conc
 def check_full_inputs(input_dict):
     candidates = []
     for candidate, in_d in input_dict.items():
-        if not any(in_d.values()):
+        if not any([x is None for x in in_d.values()]):
             candidates.append(candidate)
 
     return candidates
@@ -40,20 +40,26 @@ class Controller(nn.Module):
 
     def forward(self, x):
         next_node = [self.entry_point]
-        current_out = defaultdict(dict())
+        current_out = defaultdict(dict)
+        current_out[self.entry_point][self.entry_point] = x
+        computed_nodes = set()
 
         while next_node != []:
-            next_id = next_node.pop()
-            output, to_nodes = self.module_dict[next_id](x)
+            next_id = next_node.pop(0)
+            inputs = list(current_out[next_id].values())
+            output, to_nodes = self.network_map[next_id](*inputs)
+            output.retain_grad()
             for n in to_nodes:
-                if not current_out[n]:
-                    current_out[n] = {k: None for k in self.network_dir[n]['in'].keys()}
-                else:
-                    current_out[n][next_id] = output
+                if n not in current_out:
+                    current_out[n] = {k: None for k in self.network_dir[n]['in']}
+
+                current_out[n][next_id] = output
+
+            # if next_id in current_out:
+            #     del current_out[next_id] # prevents storing too much info. Shouldnt need the key any more
+            computed_nodes.add(next_id)
             candidates = check_full_inputs(current_out)
-            if next_id in current_out:
-                del current_out[next_id] # prevents storing too much info. Shouldnt need the key any more
-            next_node.extend(candidates)
+            [next_node.append(c) for c in candidates if c not in next_node and c not in computed_nodes]
 
         return output
 
@@ -107,6 +113,8 @@ class RandomArchitectureGenerator():
 
         self.max_pool = np.floor(np.log2(self.image_width))  # as per paper
         self.pool_nodes = []
+
+        self.binary_nodes = []
 
         self.input_nodes: Union[List, int] = []  # will implement a consolidation of input nodes to a single node
 
@@ -171,8 +179,10 @@ class RandomArchitectureGenerator():
             node_id = next(self.next_node_id)
         if node_type == 'SUM':
             new_node = SumNode(node_id, )
+            self.binary_nodes.append(node_id)
         elif node_type == 'CONCAT':
             new_node = ConcatNode(node_id)
+            self.binary_nodes.append(node_id)
         elif node_type == 'CONV':
             new_node = ConvNode(node_id)
         elif node_type == 'MAX':
@@ -282,6 +292,9 @@ class RandomArchitectureGenerator():
 
         # Now that the graph is complete, the nodes can be initialised
         self.initialise_nodes()
+        self.compile_model()
+        self.decompose_binary_nodes()
+        self.update_nodes() #Need to re-wire the assignments from the decomposition
 
         self.compile_model()
 
@@ -307,9 +320,9 @@ class RandomArchitectureGenerator():
         network_map = []
         network_directory = {}
         for k, v in self.node_reference.items():
-            network_directory[k] = {
-                'in': [n.id_name for n in v.predecessors],
-                'out': [n.id_name for n in v.successors]
+            network_directory[v.id_name] = {
+                'in': [n.id_name for n in v.successors],
+                'out': [n.id_name for n in v.predecessors]
             }
             if isinstance(v, InputNode):
                 input_name, input_node = v.id_name, v.model
@@ -405,6 +418,22 @@ class RandomArchitectureGenerator():
         for node in self.graph.nodes():
             self.node_reference[node].update_connectivity(self.graph, self.node_reference)
 
+
+    def decompose_binary_nodes(self):
+        for bin in self.binary_nodes:
+            bin_node: BinaryNode = self.node_reference[bin]
+            replacement_map = {}
+            for suc, pre_proc_n in bin_node.preprocessors.items():
+                new_id = next(self.next_node_id)
+                replacement_map[new_id] = self.network_map[suc].node_id
+                pre_proc_n.node_id = new_id #Doesnt get assigned on creation, so need to add here
+                self.add_new_node(pre_proc_n, bin)
+
+            for new, old in replacement_map.items():
+                self.graph.remove_edge(bin, old)
+                self.graph.add_edge(new, old)
+
+
     def reset(self, min_depth: int = None, max_depth: int = None, image_size: int = None, input_channels: int = None):
         if min_depth is None:
             min_depth = self.min_depth
@@ -468,5 +497,8 @@ if __name__ == '__main__':
 
     in_tensor = torch.rand(1, 1, 28, 28, requires_grad=True)
     out = cont(in_tensor)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(cont.parameters(), lr=0.001, momentum=0.9)
+    print(out)
 
     out
