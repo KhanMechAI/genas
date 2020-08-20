@@ -80,7 +80,7 @@ class ConvBlock(nn.Module):
                 dilation=self.dilation,
                 stride=self.stride
             ),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.BatchNorm2d(
                 num_features=self.out_channels
             ),
@@ -116,7 +116,7 @@ class BinaryBlock(nn.Module):
     def __init__(self, consolidated_processing_stack, num_inputs):
         super(BinaryBlock, self).__init__()
         self.consolidated_processing_stack = nn.ModuleDict(consolidated_processing_stack)
-        self.requires_grad_(False)
+        self.requires_grad_(True)
         self.num_inputs = num_inputs
         # self.trace = []
 

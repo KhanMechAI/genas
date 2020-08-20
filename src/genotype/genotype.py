@@ -1,3 +1,4 @@
+from collections import defaultdict
 from queue import Queue
 from typing import Union, List, Dict, Tuple
 
@@ -8,12 +9,59 @@ import torch
 import torch.nn as nn
 from networkx import DiGraph
 
-from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+# from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+#     BinaryNode, PoolNode, OutputNode
+
+
+from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
     BinaryNode, PoolNode, OutputNode
 
 
-# from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
-#     BinaryNode, PoolNode, OutputNode
+def check_full_inputs(input_dict):
+    candidates = []
+    for candidate, in_d in input_dict.items():
+        if not any(in_d.values()):
+            candidates.append(candidate)
+
+    return candidates
+
+
+class Controller(nn.Module):
+    def __init__(self, module_dict, network_map, entry_point, network_dir, device: str = 'cpu'):
+        super(Controller, self).__init__()
+        self.module_dict = module_dict  # to register parameters
+        self.network_map = network_map  # register of all nodes
+        self.entry_point: str = entry_point
+        self.input_node = network_map[entry_point]  # to enter the model
+        self.device: str = device
+        self.network_dir = network_dir
+
+        self.update_device(device)
+
+    def forward(self, x):
+        next_node = [self.entry_point]
+        current_out = defaultdict(dict())
+
+        while next_node != []:
+            next_id = next_node.pop()
+            output, to_nodes = self.module_dict[next_id](x)
+            for n in to_nodes:
+                if not current_out[n]:
+                    current_out[n] = {k: None for k in self.network_dir[n]['in'].keys()}
+                else:
+                    current_out[n][next_id] = output
+            candidates = check_full_inputs(current_out)
+            if next_id in current_out:
+                del current_out[next_id] # prevents storing too much info. Shouldnt need the key any more
+            next_node.extend(candidates)
+
+        return output
+
+    def update_device(self, device):
+        self.device = device
+        for name, mod in self.network_map.items():
+            mod.update_device(device)
+
 
 class RandomArchitectureGenerator():
     MAX_DEPTH = 100
@@ -74,6 +122,7 @@ class RandomArchitectureGenerator():
 
         self._module_dict = nn.ModuleDict()
         self.network_map = nn.ModuleDict()
+        self.network_directory = {}
 
     @staticmethod
     def new_node_id(start_node=1, step=1):
@@ -190,7 +239,8 @@ class RandomArchitectureGenerator():
 
         return node
 
-    def get_architecture(self, reset_on_finish=False) -> Union[int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
+    def get_architecture(self, reset_on_finish=False) -> Union[
+        int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
         current_level = 0
         while not self.queue.empty():
             node_id, current_level = self.queue.get()
@@ -235,8 +285,6 @@ class RandomArchitectureGenerator():
 
         self.compile_model()
 
-
-
         if reset_on_finish:
             self.reset()
             return -1
@@ -250,24 +298,19 @@ class RandomArchitectureGenerator():
         self.node_reference[self.input_nodes].initialise()
 
     def controller(self):
-        class Controller(nn.Module):
-            def __init__(self, module_dict, network_map, entry_point, ):
-                super(Controller, self).__init__()
-                self.module_dict = module_dict #to register parameters
-                self.network_map = network_map #register of all nodes
-                self.entry_point: str = entry_point
-                self.input_node = network_map[entry_point]#to enter the model
 
-            def forward(self, x):
-                x = self.input_node(x)
-                return x
-
-        return Controller(self._module_dict, self.network_map, self.entry_point_name())
+        return Controller(self._module_dict, self.network_map, self.entry_point_name(),
+                          network_dir=self.network_directory)
 
     def compile_model(self):
         model_list = []
         network_map = []
+        network_directory = {}
         for k, v in self.node_reference.items():
+            network_directory[k] = {
+                'in': [n.id_name for n in v.predecessors],
+                'out': [n.id_name for n in v.successors]
+            }
             if isinstance(v, InputNode):
                 input_name, input_node = v.id_name, v.model
             else:
@@ -278,6 +321,7 @@ class RandomArchitectureGenerator():
         model_list = reversed(model_list)
         self._module_dict.update(model_list)
         self.network_map.update(network_map)
+        self.network_directory = network_directory
 
     def check_input_nodes(self):
         if not self.input_nodes:
@@ -422,7 +466,7 @@ if __name__ == '__main__':
 
     # cont = rag.controller()
 
-    in_tensor = torch.rand(1, 1, 28, 28)
+    in_tensor = torch.rand(1, 1, 28, 28, requires_grad=True)
     out = cont(in_tensor)
 
     out

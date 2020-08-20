@@ -13,10 +13,51 @@ from networkx import DiGraph
 from .models import InputBlock, OutBlock, ConvBlock, PoolBlock, SumBlock, ConcatBlock
 
 
+class Flatten(nn.Module):
+    def forward(self, x):
+        N, C, H, W = x.size()  # read in N, C, H, W
+        return x.view(N, -1)
+
+
+class sub_module(nn.Module):
+    def __init__(self, module_list: nn.ModuleList):
+        super(sub_module, self).__init__()
+        self.module_list = module_list
+        self.device = None
+
+        for mod in self.module_list:
+            for param in mod.parameters():
+                param.requires_grad = True
+
+    def forward(self, x):
+        for l in self.module_list:
+            x = l(x)
+        return x
+
+    def update_device(self, device):
+        self.device = device
+
+
+class PadModule(nn.Module):
+    def __init__(self, channels, device='cpu'):
+        super(PadModule, self).__init__()
+        self.channels = channels
+        self.device = device
+
+    def forward(self, tensor: torch.Tensor):
+        shape = list(tensor.shape)
+        shape[1] = self.channels  # TODO: Figure out how to make this before forward pass and move to __init__
+        return torch.cat((tensor, torch.zeros(shape).to(self.device)), 1)
+
+    def update_device(self, device):
+        self.device = device
+
+
 class Node(nn.Module):
 
     def __init__(self, node_id: int, predecessors: List[Node] = [], successors: List[Node] = [], ):
         super(Node, self).__init__()
+        self.requires_grad = True
         self.predecessors: List[Node] = predecessors  # where the results get pushed to
         self.successors: List[Node] = successors  # recieving inputs from
 
@@ -33,7 +74,7 @@ class Node(nn.Module):
         self.in_width: int = None
         self.out_width: int = None
 
-        self.model: Callable = None  # I pass a dictionary
+        self.model: nn.Module = None  # I pass a dictionary
         # of values that most functions only need the first element of, but some functions need the whole dict.
 
         self.node_id: int = node_id
@@ -45,9 +86,9 @@ class Node(nn.Module):
 
         self.name = 'Base Class Node'
 
-        # self._id_name = ''
-
         self.terminal = self.node_id == -1
+
+        self.device: str = None  # gets updated by controller
 
     @property
     def id_name(self):
@@ -98,25 +139,24 @@ class Node(nn.Module):
     def inputs_full(self):
         return len(self.inputs.keys()) == self.num_inputs
 
-    def forward(self, node: Node, tensor: torch.Tensor):
-        self.inputs[node.id_name] = tensor
+    # def forward(self, node: Node, tensor: torch.Tensor):
+    #     self.inputs[node.id_name] = tensor
+    #
+    #     if self.inputs_full():
+    #         x = self.model(self.inputs)
+    #         self.inputs = {}
+    #         if self.terminal:
+    #             return x
+    #         else:
+    #             for pred in self.predecessors:
+    #                 out = pred(self, x)
+    #
+    #         return out
 
-        if self.inputs_full():
-            x = self.model(self.inputs)
-            self.inputs = {}
-            # print(f'Just ran through: {self.node_name()}')
-            if self.terminal:
-                # print(f'Arrived at {self.node_name()} - Returning too {node.node_name()}')
-                # print(f'Return size: {x.shape}')
-                return x
-            else:
-                for pred in self.predecessors:
-                    out = pred.forward(self, x)
-                    if out is not None:
-                        # print(f'Arrived at {self.node_name()}')
-                        # print(f'Now returning from {pred.node_name()} - Heading too {node.node_name()}')
-                        # print(f'Return size: {out.shape}')
-                        return out
+    def forward(self, tensor):
+        # v = list(value_dict.values())[0]
+        v = self.model(tensor)
+        return v, self.successors
 
     def random_initialisation(self):
         # Allows overriding by necessary base classes, else does nothing
@@ -154,7 +194,7 @@ class Node(nn.Module):
 
     def local_params(self):
         params = {}
-        for k,v in vars(self).items():
+        for k, v in vars(self).items():
             if not k.startswith('_'):
                 if isinstance(v, int):
                     params[k] = v
@@ -162,9 +202,12 @@ class Node(nn.Module):
         return params
 
     def verify_parameters(self):
-        for k,v in self.local_params().items():
+        for k, v in self.local_params().items():
             if v <= 0:
                 print(f'Warning: Negative or zero parameter. {k}: {v}')
+
+    def update_device(self, device):
+        self.device = device
 
 
 class InputNode(Node):
@@ -202,9 +245,9 @@ class InputNode(Node):
     def forward(self, tensor: torch.Tensor):
         tensor = self.model(tensor)
         for pred in self.predecessors:
-            x = pred.forward(self, tensor)
-            if x is not None:
-                return x
+            x = pred(self, tensor)
+
+        return x
 
 
 class OutputNode(Node):
@@ -240,17 +283,33 @@ class OutputNode(Node):
 
         self.in_features = self.successors[0].out_features()
 
-        self.model = self.get_model()
+        self.model = nn.Sequential(
+            Flatten(),
+            nn.Linear(
+                in_features=self.in_features,  # v.shape[1],
+                out_features=self.out_features
+            ),
+            nn.LeakyReLU(inplace=True),
+            nn.Dropout(
+                p=self.dropout_rate
+            ),
+            nn.Linear(
+                in_features=self.out_features,
+                out_features=self.classes
+            ),
+            nn.Softmax()
+        )
         self.initialised = True
 
-    def get_model(self):
-        params = dict(
-            dropout_rate=self.dropout_rate,
-            out_features=self.out_features,
-            classes=self.classes,
-            in_features=self.in_features,
-        )
-        return OutBlock(**params)
+    # def forward(self, _, tensor):
+    #     # v = list(value_dict.values())[0]
+    #     v = self.model(tensor)
+    #     return v, self.successors
+    #
+    def forward(self, _, tensor):
+        # v = list(value_dict.values())[0]
+        v = self.model(tensor)
+        return v, self.successors
 
 
 class KernelNode(Node):
@@ -307,8 +366,8 @@ class KernelNode(Node):
 
         self._calculate_out_params()
 
-        self.model = self.get_model()
-        super().add_module(self.id_name, self.model)
+        self.get_model()
+        # super().add_module(self.id_name, self.model)
 
 
 class ConvNode(KernelNode):
@@ -327,18 +386,33 @@ class ConvNode(KernelNode):
         self.pad_mode = np.random.choice(ConvNode.PAD_MODES).item()
 
     def get_model(self):
-        params = dict(
-            in_channels=self.in_channels,
-            out_channels=self.out_channels,
-            in_width=self.in_width,
-            padding=self.padding,
-            pad_mode=self.pad_mode,
-            dilation=self.dilation,
-            stride=self.stride,
-            kernel=self.kernel,
-            id_name=self.id_name,
+        self.model = nn.Sequential(
+            nn.Conv2d(
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel,
+                padding=self.padding,
+                padding_mode=self.pad_mode,
+                dilation=self.dilation,
+                stride=self.stride
+            ),
+            nn.LeakyReLU(),
+            nn.BatchNorm2d(
+                num_features=self.out_channels
+            ),
         )
-        return ConvBlock(**params)
+        return
+
+    def forward(self, node: Node, tensor: torch.Tensor):
+        self.inputs[node.id_name] = tensor
+
+        if self.inputs_full():
+            x = self.model(tensor)
+            self.inputs = {}
+            for pred in self.predecessors:
+                out = pred(self, x)
+
+            return out
 
 
 class PoolNode(KernelNode):
@@ -362,6 +436,17 @@ class PoolNode(KernelNode):
     def _pre_initialise(self):
         self.out_channels = self.in_channels
 
+    def forward(self, node: Node, tensor: torch.Tensor):
+        self.inputs[node.id_name] = tensor
+
+        if self.inputs_full():
+            x = self.model(tensor)
+            self.inputs = {}
+            for pred in self.predecessors:
+                out = pred(self, x)
+
+            return out
+
 
 class MaxPoolNode(PoolNode):
 
@@ -370,13 +455,13 @@ class MaxPoolNode(PoolNode):
         self.name = 'MaxPool Node'
 
     def get_model(self):
-        params = dict(
+        self.model = nn.MaxPool2d(
             dilation=self.dilation,
             kernel_size=self.kernel,
             padding=self.padding,
             stride=self.stride,
         )
-        return self._get_model(pool_func=nn.MaxPool2d, kwargs=params)
+        return
 
 
 class AvgPoolNode(PoolNode):
@@ -386,12 +471,12 @@ class AvgPoolNode(PoolNode):
         self.name = 'Average Pool Node'
 
     def get_model(self):
-        params = dict(
+        self.model = nn.AvgPool2d(
             kernel_size=self.kernel,
             padding=self.padding,
             stride=self.stride,
         )
-        return self._get_model(pool_func=nn.AvgPool2d, kwargs=params)
+        return
 
 
 class BinaryNode(Node):
@@ -408,10 +493,12 @@ class BinaryNode(Node):
 
         self.max_channels = None
 
-        self.processing_stack: Dict[str, nn.ModuleList] = defaultdict(nn.ModuleList)
-        self.consolidated_processing_stack: Dict[str, Callable] = {}
+        self.processing_stack: nn.ModuleDict[str, nn.ModuleList] = nn.ModuleDict()
+        self.consolidated_processing_stack: nn.ModuleDict[str, nn.ModuleList] = {}
 
         self.name = 'Binary Class Node'
+
+        self.identity = nn.Identity()
 
     def set_max_channels(self):
         self.max_channels = max(self.in_channels.values())
@@ -433,10 +520,11 @@ class BinaryNode(Node):
     def resize_func(self, smaller_id) -> nn.Module:
         resize_shape = (self.in_height[smaller_id], self.in_width[smaller_id])
 
-        return torch.nn.Upsample(resize_shape, mode='bilinear')
+        return nn.Upsample(resize_shape, mode='bilinear')
 
     def add_resize_to_larger_input_stack(self):
         smaller_id, larger_id = self.shape_ids()
+
         self.processing_stack[larger_id].append(self.resize_func(smaller_id))
 
     def equal_channel_inputs(self) -> bool:
@@ -446,19 +534,6 @@ class BinaryNode(Node):
         smaller_id, larger_id = self.channel_ids()
         num_channels = max(self.in_channels.values()) - min(self.in_channels.values())
 
-
-        class PadModule(nn.Module):
-            def __init__(self, channels):
-                super(PadModule, self).__init__()
-                self.channels = channels
-                self.trace = []
-
-            def forward(self, tensor: torch.Tensor):
-                shape = (tensor.shape[0], self.channels, tensor.shape[2], tensor.shape[3])
-                self.trace.append(tensor)
-                return torch.cat((tensor, torch.zeros(shape)), 1)
-
-        # Pad the smaller tensor with zeros
         self.processing_stack[smaller_id].append(PadModule(num_channels))
 
     def channel_ids(self) -> Tuple[str, str]:
@@ -473,31 +548,16 @@ class BinaryNode(Node):
         self.output_shape = output_shape
 
     def make_subclass(self, module_list):
-        class sub_module(nn.Module):
-            def __init__(self, module_list: nn.ModuleList):
-                super(sub_module, self).__init__()
-                self.module_list = module_list
-                self.trace = []  # not sure why doing this, but saw someone else doing it
-                for mod in self.module_list:
-                    for param in mod.parameters():
-                        param.requires_grad = False
-
-            def forward(self, x):
-                for l in self.module_list:
-                    x = l(x)
-                    self.trace.append(x)
-                return x
-
         return sub_module(module_list)
 
-    def consolidate_processing_stack(self):
-        for in_node in self.successors:
-            if self.processing_stack[in_node.id_name]:
-                self.consolidated_processing_stack[in_node.id_name] = \
-                    self.make_subclass(self.processing_stack[in_node.id_name])
-            else:
-                self.consolidated_processing_stack[in_node.id_name] = \
-                    self.make_subclass(nn.ModuleList())
+    # def consolidate_processing_stack(self):
+    #     for in_node in self.successors:
+    #         if self.processing_stack[in_node.id_name]:
+    #             self.consolidated_processing_stack[in_node.id_name] = \
+    #                 self.make_subclass(self.processing_stack[in_node.id_name])
+    #         else:
+    #             self.consolidated_processing_stack[in_node.id_name] = \
+    #                 self.make_subclass(nn.ModuleList())
 
     def _pre_initialise(self, block):
         for suc in self.successors:
@@ -509,7 +569,7 @@ class BinaryNode(Node):
         self.set_max_channels()
         self.set_output_shape()
         self.get_processing_stack()
-        self.consolidate_processing_stack()
+        # self.consolidate_processing_stack()
         self.model = self.get_model(block)
         super().add_module(self.id_name, self.model)
 
@@ -520,6 +580,11 @@ class BinaryNode(Node):
         )
         return block(**params)
 
+    def update_device(self, device):
+        self.device = device
+        for model in self.consolidated_processing_stack.values():
+            model.update_device(device)
+
 
 class SumNode(BinaryNode):
 
@@ -528,6 +593,8 @@ class SumNode(BinaryNode):
         self.name = 'Sum Node'
 
     def get_processing_stack(self):
+        for suc in self.successors:
+            self.processing_stack[suc.id_name] = nn.ModuleList()
 
         if not self.equal_size_input():
             self.add_resize_to_larger_input_stack()
@@ -535,10 +602,35 @@ class SumNode(BinaryNode):
         if not self.equal_channel_inputs():
             self.add_channel_to_smaller_input_stack()
 
+        for k, l in self.processing_stack.items():
+            if len(l) < 1:
+                self.processing_stack[k].append(nn.Identity())
+
     def _initialise(self):
         self._pre_initialise(SumBlock)
-        # _, larger_id = self.channel_ids()
-        # # self.out_channels = 2 * self.in_channels[larger_id]
+
+    def forward(self, node, tensor):
+        self.inputs[node.id_name] = tensor
+
+        if self.inputs_full():
+            if self.num_inputs > 1:
+                tens_list = []
+                for node_id in self.inputs.keys():
+                    v = self.inputs[node_id]
+                    m_list = self.processing_stack[node_id]
+                    for mod in m_list:
+                        v = mod(v)
+                    tens_list.append(v)
+                # tensor = [self.consolidated_processing_stack[k](v) for k, v in self.inputs.items()]
+                x = torch.add(*tens_list)
+            else:
+                x = self.identity(list(self.inputs.values())[0])
+            self.inputs = {}
+
+            for pred in self.predecessors:
+                out = pred(self, x)
+
+            return out
 
 
 class ConcatNode(BinaryNode):
@@ -549,10 +641,38 @@ class ConcatNode(BinaryNode):
 
     # this needs to be child node dependent
     def get_processing_stack(self):
+
+        for suc in self.successors:
+            self.processing_stack[suc.id_name] = nn.ModuleList()
+
         if not self.equal_size_input():
             self.add_resize_to_larger_input_stack()
+
+        for k, l in self.processing_stack.items():
+            if len(l) < 1:
+                self.processing_stack[k].append(nn.Identity())
 
     def _initialise(self):
         self._pre_initialise(ConcatBlock)
 
         self.out_channels = sum(self.in_channels.values())
+
+    def forward(self, node, tensor):
+        self.inputs[node.id_name] = tensor
+
+        if self.inputs_full():
+            if self.num_inputs > 1:
+                tens_list = []
+                for node_id, m_list in self.processing_stack.items():
+                    v = self.inputs[node_id]
+                    for mod in m_list:
+                        v = mod(v)
+                    tens_list.append(v)
+                x = torch.cat(tens_list, dim=1)
+            else:
+                x = self.identity(list(self.inputs.values())[0])
+
+            for pred in self.predecessors:
+                out = pred(self, x)
+
+            return out
