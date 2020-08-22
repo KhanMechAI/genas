@@ -12,7 +12,6 @@ from networkx import DiGraph
 from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
     BinaryNode, PoolNode, OutputNode
 
-
 def check_full_inputs(input_dict):
     candidates = []
     for candidate, in_d in input_dict.items():
@@ -282,7 +281,7 @@ class RandomArchitectureGenerator:
             self.reset()
             return None
 
-        self.state = False
+        self.state = True
 
         self.check_input_nodes()
         self.add_missing_edges()
