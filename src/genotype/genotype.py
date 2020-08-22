@@ -65,7 +65,7 @@ class Controller(nn.Module):
             mod.update_device(device)
 
 
-class RandomArchitectureGenerator():
+class RandomArchitectureGenerator:
     MAX_DEPTH = 100
     MIN_DEPTH = 5
     MIN_NODES = 5
@@ -127,6 +127,7 @@ class RandomArchitectureGenerator():
         self._module_dict = nn.ModuleDict()
         self.network_map = nn.ModuleDict()
         self.network_directory = {}
+        self.state  = False
 
     @staticmethod
     def new_node_id(start_node=1, step=1):
@@ -245,9 +246,10 @@ class RandomArchitectureGenerator():
 
         return node
 
-    def get_architecture(self, reset_on_finish=False) -> Union[
-        int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
+    def get_architecture(self, reset_on_finish=False) -> Union[int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
         current_level = 0
+        if self.state:
+            self.reset()
         while not self.queue.empty():
             node_id, current_level = self.queue.get()
             arity = self.node_reference[node_id].arity
@@ -430,7 +432,8 @@ class RandomArchitectureGenerator():
                 self.graph.add_edge(new, old)
 
 
-    def reset(self, min_depth: int = None, max_depth: int = None, image_size: int = None, input_channels: int = None):
+    def reset(self, min_depth: int = None, max_depth: int = None, image_size: int = None,
+              input_channels: int = None, min_nodes: int=None):
         if min_depth is None:
             min_depth = self.min_depth
 
@@ -443,12 +446,16 @@ class RandomArchitectureGenerator():
         if input_channels is None:
             input_channels = self.input_channels
 
+        if min_nodes is None:
+            min_nodes = self.min_nodes
+
         self.__init__(
             prediction_classes=self.prediction_classes,
             min_depth=min_depth,
             max_depth=max_depth,
             input_channels=input_channels,
-            image_size=image_size
+            image_size=image_size,
+            min_nodes=min_nodes
         )
 
     def show(self, labels='type'):
