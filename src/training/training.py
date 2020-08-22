@@ -117,9 +117,9 @@ cont.to(device)
 running_loss = 0.0
 
 lr = 0.01
-# optimizer = optim.Adam(cont.parameters(), lr=lr,)
+optimizer = optim.Adam(cont.parameters(), lr=lr,)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(cont.parameters(), lr=lr, momentum=0.9)
+# optimizer = optim.SGD(cont.parameters(), lr=lr, momentum=0.9)
 
 batch_tt = np.empty(shape=(10,))
 k = 0
