@@ -282,6 +282,8 @@ class RandomArchitectureGenerator:
             self.reset()
             return None
 
+        self.state = False
+
         self.check_input_nodes()
         self.add_missing_edges()
         self.prune_pool_nodes()
@@ -298,7 +300,6 @@ class RandomArchitectureGenerator:
 
         if reset_on_finish:
             self.reset()
-            return -1
 
         return self.controller()
 
