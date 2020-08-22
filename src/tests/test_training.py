@@ -14,7 +14,6 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, transforms
 from datetime import datetime
 import matplotlib.pyplot as plt
-from torchsummary import summary
 
 from genotype.genotype import RandomArchitectureGenerator
 
