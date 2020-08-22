@@ -1,4 +1,4 @@
-from __future__ import annotations
+# from __future__ import annotations
 
 from collections import defaultdict
 from functools import reduce
@@ -21,8 +21,8 @@ class Flatten(nn.Module):
 
 class Node(nn.Module):
 
-    def __init__(self, node_id: int, predecessors: List[Node] = [], successors: List[Node] = [], ):
-        super(Node, self).__init__()
+    def __init__(self, node_id: int, predecessors: List = [], successors: List = [], ):
+        super().__init__()
         self.requires_grad = True
         self.predecessors: List[Node] = predecessors  # where the results get pushed to
         self.successors: List[Node] = successors  # recieving inputs from
@@ -129,7 +129,7 @@ class Node(nn.Module):
         if self.initialised:
             self._initialise_predecessors()
 
-    def update_connectivity(self, graph: DiGraph, node_reference: Dict[int, Node]):
+    def update_connectivity(self, graph: DiGraph, node_reference: Dict[int, object]):
         self.num_inputs = graph.out_degree(self.node_id)
         self.predecessors = [node_reference[x] for x in graph.predecessors(self.node_id)]
         self.successors = [node_reference[x] for x in graph.successors(self.node_id)]
@@ -553,7 +553,7 @@ class ConcatNode(BinaryNode):
 
 class PadModule(nn.Module):
     def __init__(self, channels):
-        super(PadModule, self).__init__()
+        super().__init__()
         self.channels = channels
         self.device = None
 
