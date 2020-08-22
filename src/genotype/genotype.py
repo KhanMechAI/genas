@@ -48,15 +48,15 @@ class Controller(nn.Module):
             next_id = next_node.pop(0)
             inputs = list(current_out[next_id].values())
             output, to_nodes = self.network_map[next_id](*inputs)
-            output.retain_grad()
+            # output.retain_grad()
             for n in to_nodes:
                 if n not in current_out:
                     current_out[n] = {k: None for k in self.network_dir[n]['in']}
 
                 current_out[n][next_id] = output
 
-            # if next_id in current_out:
-            #     del current_out[next_id] # prevents storing too much info. Shouldnt need the key any more
+            if next_id in current_out:
+                del current_out[next_id] # prevents storing too much info. Shouldnt need the key any more
             computed_nodes.add(next_id)
             candidates = check_full_inputs(current_out)
             [next_node.append(c) for c in candidates if c not in next_node and c not in computed_nodes]
