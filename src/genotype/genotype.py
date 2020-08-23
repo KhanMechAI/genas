@@ -8,9 +8,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 from networkx import DiGraph
+#
+# from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+#     BinaryNode, PoolNode, OutputNode
 
-from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
     BinaryNode, PoolNode, OutputNode
+
 
 def check_full_inputs(input_dict):
     candidates = []
@@ -22,14 +26,14 @@ def check_full_inputs(input_dict):
 
 
 class Controller(nn.Module):
-    def __init__(self, module_dict, network_map, entry_point, network_dir, device: str = 'cpu'):
+    def __init__(self, network_map, entry_point, network_dir, g_size, device: str = 'cpu'):
         super(Controller, self).__init__()
-        self.module_dict = module_dict  # to register parameters
-        self.network_map = network_map  # register of all nodes
+        self.network_map: nn.ModuleDict = network_map  # register of all nodes
         self.entry_point: str = entry_point
         self.input_node = network_map[entry_point]  # to enter the model
         self.device: str = device
         self.network_dir = network_dir
+        self.g_size = g_size
 
         self.update_device(device)
 
@@ -41,17 +45,14 @@ class Controller(nn.Module):
 
         while next_node != []:
             next_id = next_node.pop(0)
-            inputs = list(current_out[next_id].values())
+            inputs = list(current_out.pop(next_id).values())
             output, to_nodes = self.network_map[next_id](*inputs)
-            # output.retain_grad()
             for n in to_nodes:
                 if n not in current_out:
                     current_out[n] = {k: None for k in self.network_dir[n]['in']}
 
                 current_out[n][next_id] = output
 
-            if next_id in current_out:
-                del current_out[next_id] # prevents storing too much info. Shouldnt need the key any more
             computed_nodes.add(next_id)
             candidates = check_full_inputs(current_out)
             [next_node.append(c) for c in candidates if c not in next_node and c not in computed_nodes]
@@ -62,6 +63,74 @@ class Controller(nn.Module):
         self.device = device
         for name, mod in self.network_map.items():
             mod.update_device(device)
+
+    def count_nodes(self):
+        return len(self.network_map.keys())
+
+    def count_parameters(self, requires_grad=True):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad == requires_grad)
+
+    def count_node_types(self):
+        node_count = defaultdict(lambda: 0)
+        for k, v in self.network_map.items():
+            k = k.split(':')[1]
+            k = k.split('_')[0]
+            node_count[k] += 1
+        return node_count
+
+    def get_stats(self):
+        node_count = self.count_node_types()
+        stat_dict = {
+            'Parameters': self.count_parameters(),
+            'Graph size': self.g_size,
+            'Total nodes': self.count_nodes(),
+        }
+        stat_dict.update(**node_count)
+        return stat_dict
+
+    def _longest_stat(self, stat_dict):
+        longest_v_stat = 0
+        longest_k_stat = 0
+        for k, v in stat_dict.items():
+            v_len = len(str(v))
+            k_len = len(str(k))
+            if v_len > longest_v_stat:
+                longest_v_stat = v_len
+
+            if k_len > longest_k_stat:
+                longest_k_stat = k_len
+        return longest_k_stat, longest_v_stat
+
+    def stats(self):
+        prop, val = 'Property', 'Values'
+        stat_dict = {prop:val}
+        stat_dict.update(self.get_stats())
+        k_len, v_len = self._longest_stat(stat_dict)
+
+        stat_dict.pop(prop)
+
+        v_pad = 4
+        k_pad = 2
+        stat_fmt = lambda x, y: (f'| {x:<{k_len + k_pad}}|'
+                                 f'{y:^{(v_len + v_pad)}}|')
+        stat_msg = stat_fmt(prop, val)
+        border_len = len(stat_msg)
+        print('_' * border_len)
+        print(stat_msg)
+        print('-' * border_len)
+        print("\n".join(stat_fmt(k,v) for k, v in stat_dict.items()))
+        print('-' * border_len)
+
+
+    def _suffix(self):
+        stats = self.get_stats()
+        suf = (
+            f'P{stats["Parameters"]:.2e}'.replace('+','').replace('.','_'),
+            f'N{stats["Total nodes"]}',
+            f'G{stats["Graph size"]}',
+           )
+        return '_'.join(suf)
+
 
 
 class RandomArchitectureGenerator:
@@ -126,7 +195,7 @@ class RandomArchitectureGenerator:
         self._module_dict = nn.ModuleDict()
         self.network_map = nn.ModuleDict()
         self.network_directory = {}
-        self.state  = False
+        self.state = False
 
     @staticmethod
     def new_node_id(start_node=1, step=1):
@@ -245,7 +314,8 @@ class RandomArchitectureGenerator:
 
         return node
 
-    def get_architecture(self, reset_on_finish=False) -> Union[int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
+    def get_architecture(self, reset_on_finish=False) -> Union[
+        int, nn.Module]:  # Tuple[DiGraph, Dict[int, Node], Node]:
         current_level = 0
         if self.state:
             self.reset()
@@ -293,7 +363,7 @@ class RandomArchitectureGenerator:
         self.initialise_nodes()
         self.compile_model()
         self.decompose_binary_nodes()
-        self.update_nodes() #Need to re-wire the assignments from the decomposition
+        self.update_nodes()  # Need to re-wire the assignments from the decomposition
 
         self.compile_model()
 
@@ -310,8 +380,8 @@ class RandomArchitectureGenerator:
 
     def controller(self):
 
-        return Controller(self._module_dict, self.network_map, self.entry_point_name(),
-                          network_dir=self.network_directory)
+        return Controller(self.network_map, self.entry_point_name(),
+                          network_dir=self.network_directory, g_size=self.graph.size())
 
     def compile_model(self):
         model_list = []
@@ -416,7 +486,6 @@ class RandomArchitectureGenerator:
         for node in self.graph.nodes():
             self.node_reference[node].update_connectivity(self.graph, self.node_reference)
 
-
     def decompose_binary_nodes(self):
         for bin in self.binary_nodes:
             bin_node: BinaryNode = self.node_reference[bin]
@@ -424,16 +493,15 @@ class RandomArchitectureGenerator:
             for suc, pre_proc_n in bin_node.preprocessors.items():
                 new_id = next(self.next_node_id)
                 replacement_map[new_id] = self.network_map[suc].node_id
-                pre_proc_n.node_id = new_id #Doesnt get assigned on creation, so need to add here
+                pre_proc_n.node_id = new_id  # Doesnt get assigned on creation, so need to add here
                 self.add_new_node(pre_proc_n, bin)
 
             for new, old in replacement_map.items():
                 self.graph.remove_edge(bin, old)
                 self.graph.add_edge(new, old)
 
-
     def reset(self, min_depth: int = None, max_depth: int = None, image_size: int = None,
-              input_channels: int = None, min_nodes: int=None):
+              input_channels: int = None, min_nodes: int = None):
         if min_depth is None:
             min_depth = self.min_depth
 
@@ -449,7 +517,7 @@ class RandomArchitectureGenerator:
         if min_nodes is None:
             min_nodes = self.min_nodes
 
-        self.__init__(
+        self = self.__init__(
             prediction_classes=self.prediction_classes,
             min_depth=min_depth,
             max_depth=max_depth,
@@ -496,7 +564,8 @@ if __name__ == '__main__':
 
     rag.show(labels='both')
 
-    # cont = rag.controller()
+    cont.stats()
+    cont._suffix()
 
     in_tensor = torch.rand(1, 1, 28, 28, requires_grad=True)
     out = cont(in_tensor)
