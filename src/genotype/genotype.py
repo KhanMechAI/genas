@@ -8,11 +8,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from networkx import DiGraph
-#
-# from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
-#     BinaryNode, PoolNode, OutputNode
 
-from src.genotype.nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
+from .nodes import ConvNode, MaxPoolNode, AvgPoolNode, SumNode, ConcatNode, InputNode, Node, \
     BinaryNode, PoolNode, OutputNode
 
 

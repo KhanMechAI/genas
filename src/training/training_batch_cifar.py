@@ -250,9 +250,8 @@ for gen in range(0, num_gens):
     with torch.no_grad():
         output = cont(images)
 
-    fig = plt.gcf()
-    rag.show()
-    fig.savefig(out_dir / 'arch.png')
+    rag.show(out_dir / 'arch.png')
+
 
     fig, ax = plt.subplots(int(batch_size / 4), 4)
     as_im = transforms.ToPILImage()
@@ -271,5 +270,5 @@ for gen in range(0, num_gens):
     plt.tight_layout()
     plt.show()
 
-    del fig, ax, a, img, images, output, labels
+
 notify.show_toast(f"Training complete", "Your training has finished. Total time: {total_t}")
