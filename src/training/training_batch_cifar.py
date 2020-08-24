@@ -1,4 +1,5 @@
 import io
+import argparse
 from timeit import default_timer
 from pathlib import Path
 import numpy as np
@@ -20,6 +21,7 @@ from genotype.genotype import RandomArchitectureGenerator
 
 notify = ToastNotifier()
 
+
 def test(network, testloader, writer, epoch, i):
     network.eval()
     test_loss = 0
@@ -36,20 +38,20 @@ def test(network, testloader, writer, epoch, i):
 
         test_loss /= len(testloader.dataset)
         writer.add_scalar('Test loss',
-                          1+test_loss,
+                          1 + test_loss,
                           epoch * len(testloader) + i)
-        writer.add_scalar('Accuracy vs log(parameters)', -test_loss*100 /np.log(stats['Parameters']), step)
+        writer.add_scalar('Accuracy vs log(parameters)', -test_loss * 100 / np.log(stats['Parameters']), step)
         test_losses.append(test_loss)
         print('\nTest set: Avg. loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        test_loss, correct, len(testloader.dataset),
-        100. * correct / len(testloader.dataset)))
+            test_loss, correct, len(testloader.dataset),
+            100. * correct / len(testloader.dataset)))
     return
 
 
 def plot_imgs(images, batch_size, predit):
     fig = plt.figure()
     for i in range(len(images)):
-        plt.subplot(batch_size/4, 4, i + 1)
+        plt.subplot(batch_size / 4, 4, i + 1)
         plt.tight_layout()
         plt.imshow(images[i][0].cpu(), cmap='gray', interpolation='none')
         plt.title("Prediction: {}".format(
@@ -58,8 +60,9 @@ def plot_imgs(images, batch_size, predit):
         plt.yticks([])
     return fig
 
+
 def plot_to_image(figure):
-    #From https://www.tensorflow.org/tensorboard/image_summaries
+    # From https://www.tensorflow.org/tensorboard/image_summaries
     """Converts the matplotlib plot specified by 'figure' to a PNG image and
     returns it. The supplied figure is closed and inaccessible after this call."""
     # Save the plot to a PNG in memory.
@@ -76,16 +79,18 @@ def plot_to_image(figure):
     return image
 
 
-model_save_dir = Path(r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\short_train_models")
+model_save_dir = Path(
+    r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\short_train_models")
 data_dir = Path(r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\runs_cifar")
 torch.cuda.empty_cache()
-
 
 batch_size = 8
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 
-train_pth = Path(r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\cifar_10_train")
-test_pth = Path(r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\cifar_10_test")
+train_pth = Path(
+    r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\cifar_10_train")
+test_pth = Path(
+    r"G:\OneDrive - UNSW\University\Postgraduate\Year 3 Trimester 2\COMP9417\Major Project\src\cifar_10_test")
 
 trainset = torchvision.datasets.CIFAR10(root=train_pth, train=True,
                                         download=False, transform=transform)
@@ -100,28 +105,49 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
+
+parser = argparse.ArgumentParser(description='Batch settings.')
+
+parser.add_argument('--cuda', metavar='C', type=int, nargs=1,
+                    help='Which GPU? cuda:X?', dest='cuda_num', default=1)
+parser.add_argument('--min', metavar='m', type=int, nargs=1,
+                    help='Min depth', dest='min_depth', default=4)
+parser.add_argument('--max', metavar='M', type=int, nargs=1,
+                    help='Max depth', dest='max_depth', default=12)
+parser.add_argument('--nodes', metavar='n', type=int, nargs=1,
+                    help='Min number of nodes', dest='nodes', default=6)
+
+args = parser.parse_args()
+
 dataiter = iter(trainloader)
 images, labels = dataiter.next()
 in_size = (int(images.shape[1]), int(images.shape[2]), int(images.shape[2]))
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+cuda_num = args.cuda_num[0]
+device = torch.device(f"cuda:{cuda_num}" if torch.cuda.is_available() else "cpu")
 
 lr = 0.01
 
 num_epochs = 2
 num_gens = 20
+# milestones = [k for k in range(0, num_epochs*len(trainloader), 50)]
+rag=[]
+cont=[]
 for gen in range(0, num_gens):
-    rag = RandomArchitectureGenerator(
-        prediction_classes=len(classes),
-        min_depth=2,
-        max_depth=7,
-        image_size=in_size[1],
-        input_channels=in_size[0],
-        min_nodes=5
-    )
 
-    rag.get_architecture()
-    cont = rag.controller()
+    cont = -1
+    while cont == -1 or cont is None:
+        del rag, cont
+        rag = RandomArchitectureGenerator(
+            prediction_classes=len(classes),
+            min_depth=args.min_depth[0],
+            max_depth=args.max_depth[0],
+            image_size=in_size[1],
+            input_channels=in_size[0],
+            min_nodes=args.nodes[0],
+        )
+        cont = rag.get_architecture()
+
     rag.show()
 
     torch.cuda.empty_cache()
@@ -139,11 +165,11 @@ for gen in range(0, num_gens):
     start_t = default_timer()
     break_flag = False
     time_str = datetime.now().strftime('%Y%m%d%H%M')
-    model_suff = cont._suffix()
+    model_suff = cont._suffix
     comment = f'_{model_suff}'
     f_name_suff = f'_cifar'
 
-    model_log_dir = data_dir/''.join([time_str, comment])
+    model_log_dir = data_dir / ''.join([time_str, comment])
     model_log_dir.mkdir(parents=True, exist_ok=True)
 
     stats = cont.get_stats()
@@ -167,6 +193,7 @@ for gen in range(0, num_gens):
                 loss = criterion(outputs, labels).to(device).cuda(device)
                 loss.backward()
                 optimizer.step()
+                # scheduler.step()
 
                 running_loss += loss.item()
 
@@ -189,7 +216,8 @@ for gen in range(0, num_gens):
                     writer.add_scalar('Average batch time',
                                       np.mean(batch_tt).item(),
                                       step)
-                    writer.add_scalar('Loss per parameter count', running_loss/10 / np.log((stats['Parameters'])), step)
+                    writer.add_scalar('Loss per parameter count', running_loss / 10 / np.log((stats['Parameters'])),
+                                      step)
 
                     running_loss = 0.0
                     batch_tt = np.empty(shape=(10,))
@@ -197,11 +225,9 @@ for gen in range(0, num_gens):
 
                     test(cont, testloader, writer, epoch, i)
 
-                if i > 800:
+                if i > 1000:
                     break
-
-
-
+            torch.cuda.empty_cache()
 
     folder_name = f'{time_str}_TEN_l_{str(np.round(loss.item(), 3)).replace(".", "_")}'
     model_name = f'evo_net_{model_suff}.pt'
@@ -225,22 +251,26 @@ for gen in range(0, num_gens):
     with torch.no_grad():
         output = cont(images)
 
-    fig = plt.figure()
+    fig = plt.gcf()
     rag.show()
     fig.savefig(out_dir / 'arch.png')
 
-    fig = plt.figure()
-    for i in range(len(images)):
-        plt.subplot(batch_size / 4, 4, i + 1)
-        plt.tight_layout()
-        plt.imshow(images[i][0].cpu(), cmap='gray', interpolation='none')
-        plt.title("Prediction: {}".format(
-            output.data.max(1, keepdim=True)[1][i].item()))
-        plt.xticks([])
-        plt.yticks([])
+    fig, ax = plt.subplots(int(batch_size / 4), 4)
+    as_im = transforms.ToPILImage()
+    for i, a in enumerate(ax.flat):
+        img = images[i].cpu()
+        img = img / 2 + 0.5  # unnormalize
+        npimg = img.numpy()
+        a.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='none')
+        a.title.set_text("Prediction: {}".format(
+            classes[output.data.max(1, keepdim=True)[1][i].item()]))
+        a.set_xticks([])
+        a.set_yticks([])
 
     fig.savefig(out_dir / 'predict.png')
 
+    plt.tight_layout()
     plt.show()
 
+    del fig, ax, a, img, images, output, labels
 notify.show_toast(f"Training complete", "Your training has finished. Total time: {total_t}")

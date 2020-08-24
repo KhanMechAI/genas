@@ -78,14 +78,35 @@ class Controller(nn.Module):
             node_count[k] += 1
         return node_count
 
-    def get_stats(self):
-        node_count = self.count_node_types()
-        stat_dict = {
-            'Parameters': self.count_parameters(),
-            'Graph size': self.g_size,
-            'Total nodes': self.count_nodes(),
-        }
-        stat_dict.update(**node_count)
+    def count_params_type(self):
+        node_count = defaultdict(lambda: 0)
+        for v in self.network_map.values():
+            n_type = v.short_id.split(':')[1]
+            node_count[n_type] += v.count_parameters()
+        return node_count
+
+    def count_params_node(self):
+        node_count = defaultdict(lambda: 0)
+        for v in self.network_map.values():
+            n_type = v.short_id
+            node_count[n_type] += v.count_parameters()
+        return node_count
+
+    def get_stats(self, stat_type='model'):
+
+        if stat_type == 'model':
+            stat_dict = {
+                'Parameters': self.count_parameters(),
+                'Graph size': self.g_size,
+                'Total nodes': self.count_nodes(),
+            }
+            node_count = self.count_node_types()
+            stat_dict.update(**node_count)
+        elif stat_type == 'node':
+            stat_dict = self.count_params_node()
+        elif stat_type == 'type':
+            stat_dict = self.count_params_type()
+
         return stat_dict
 
     def _longest_stat(self, stat_dict):
@@ -101,10 +122,12 @@ class Controller(nn.Module):
                 longest_k_stat = k_len
         return longest_k_stat, longest_v_stat
 
-    def stats(self):
+    def stats(self, stat_type='model'):
         prop, val = 'Property', 'Values'
-        stat_dict = {prop:val}
-        stat_dict.update(self.get_stats())
+        stat_dict = {prop: val}
+
+        stat_dict.update(self.get_stats(stat_type=stat_type))
+
         k_len, v_len = self._longest_stat(stat_dict)
 
         stat_dict.pop(prop)
@@ -118,19 +141,21 @@ class Controller(nn.Module):
         print('_' * border_len)
         print(stat_msg)
         print('-' * border_len)
-        print("\n".join(stat_fmt(k,v) for k, v in stat_dict.items()))
+        print("\n".join(stat_fmt(k, v) for k, v in stat_dict.items()))
         print('-' * border_len)
 
+    def stats_by_type(self):
+        pass
 
+    @property
     def _suffix(self):
         stats = self.get_stats()
         suf = (
-            f'P{stats["Parameters"]:.2e}'.replace('+','').replace('.','_'),
+            f'P{stats["Parameters"]:.2e}'.replace('+', '').replace('.', '_'),
             f'N{stats["Total nodes"]}',
             f'G{stats["Graph size"]}',
-           )
+        )
         return '_'.join(suf)
-
 
 
 class RandomArchitectureGenerator:
@@ -192,7 +217,6 @@ class RandomArchitectureGenerator:
         self.add_new_node(output_node)
         self.add_new_node(root_node, predecessor_id=output_node.node_id)
 
-        self._module_dict = nn.ModuleDict()
         self.network_map = nn.ModuleDict()
         self.network_directory = {}
         self.state = False
@@ -379,9 +403,9 @@ class RandomArchitectureGenerator:
         self.node_reference[self.input_nodes].initialise()
 
     def controller(self):
-
-        return Controller(self.network_map, self.entry_point_name(),
-                          network_dir=self.network_directory, g_size=self.graph.size())
+        self.cont = Controller(self.network_map, self.entry_point_name(),
+                               network_dir=self.network_directory, g_size=self.graph.size())
+        return self.cont
 
     def compile_model(self):
         model_list = []
@@ -392,15 +416,7 @@ class RandomArchitectureGenerator:
                 'in': [n.id_name for n in v.successors],
                 'out': [n.id_name for n in v.predecessors]
             }
-            if isinstance(v, InputNode):
-                input_name, input_node = v.id_name, v.model
-            else:
-                model_list.append([v.id_name, v.model])
-
             network_map.append([v.id_name, v])
-        model_list.append([input_name, input_node])
-        model_list = reversed(model_list)
-        self._module_dict.update(model_list)
         self.network_map.update(network_map)
         self.network_directory = network_directory
 
@@ -526,30 +542,53 @@ class RandomArchitectureGenerator:
             min_nodes=min_nodes
         )
 
-    def show(self, labels='type'):
+    @staticmethod
+    def _min_max_scaler(arr, min_v=0, max_v=1):
+        return (arr - np.min(arr)) / (np.max(arr) - np.min(arr)) * (max_v - min_v) + min_v
+
+    def show(self, labels='type', save=None):
+        fig_size = 10
+        fig = plt.figure(figsize=(fig_size, fig_size))
+        g = self.graph.reverse()
+
+        colours = np.array([v for v in self.cont.get_stats('node').values()])
+        colours = self._min_max_scaler(colours)
+
+        cmap = plt.cm.YlOrRd
+        options = dict(
+            node_size=2000,
+            alpha=0.7,
+            font_family='Times New Roman',
+            font_size=14,
+            font_weight='bold',
+            cmap=cmap,
+            node_color=colours,
+            vmin=0,
+            vmax=1,
+        )
         if labels == 'both' or labels == 'type':
-            relabel_mapping = {k: v.node_name() for k, v in self.node_reference.items()}
-            computational_graph = nx.relabel_nodes(self.graph, relabel_mapping, )
-            options = {'node_size': 2000, 'alpha': 0.7}
+            relabel_mapping = {k: v.short_id for k, v in self.node_reference.items()}
+            computational_graph = nx.relabel_nodes(g, relabel_mapping, )
+
             if labels == 'both':
-                plt.figure(figsize=(15, 8))
                 plt.subplot(121)
                 pos = nx.spring_layout(computational_graph, iterations=50)
                 nx.draw(computational_graph, pos, with_labels=True, **options)
 
                 plt.subplot(122)
-                pos = nx.spiral_layout(self.graph, )
-                nx.draw(self.graph, with_labels=True)
+                pos = nx.spiral_layout(g, )
+                nx.draw(g, with_labels=True)
 
             else:
-                plt.figure(figsize=(15, 8))
                 plt.subplot()
-                nx.draw(computational_graph, with_labels=True)
+                nx.draw(computational_graph, with_labels=True, **options)
 
         else:
-            plt.figure(figsize=(15, 8))
             plt.subplot()
-            nx.draw(self.graph, with_labels=True)
+            nx.draw(g, with_labels=True, **options)
+
+        if save is not None:
+            fig.savefig(save)
 
         plt.show()
 
@@ -559,12 +598,13 @@ if __name__ == '__main__':
     rag = RandomArchitectureGenerator(prediction_classes=10, min_depth=3, max_depth=5, image_size=28, input_channels=1,
                                       min_nodes=3)
     cont = -1
-    while cont == -1:
+
+    while not cont == -1:
         cont = rag.get_architecture()
 
     rag.show(labels='both')
 
-    cont.stats()
+    cont.stats('node')
     cont._suffix()
 
     in_tensor = torch.rand(1, 1, 28, 28, requires_grad=True)

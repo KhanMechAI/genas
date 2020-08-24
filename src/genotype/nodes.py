@@ -55,6 +55,11 @@ class Node(nn.Module):
         self.terminal = self.node_id == -1
 
         self.device: str = None  # gets updated by controller
+        self.short_name = 'Base'
+
+    @property
+    def short_id(self):
+        return f'{self.node_id}:{self.short_name}'
 
     @property
     def id_name(self):
@@ -89,6 +94,9 @@ class Node(nn.Module):
             f')'
         )
         return rep
+
+    def count_parameters(self, requires_grad=True):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad == requires_grad)
 
     def get_model(self):
         pass
@@ -184,6 +192,7 @@ class InputNode(Node):
         self.model = nn.Identity()
 
         self.name = 'Input Node'
+        self.short_name = 'In'
 
     def _initialise(self):
         self.initialised = True
@@ -201,7 +210,7 @@ class InputNode(Node):
 
 
 class OutputNode(Node):
-    FEATURE_LIMIT = 10000
+    FEATURE_LIMIT = 64
 
     def __init__(self, classes: int):
         node_id = -1
@@ -213,6 +222,7 @@ class OutputNode(Node):
         # self._initialise()
 
         self.name = 'Output Node'
+        self.short_name = 'Out'
 
     def __repr__(self) -> str:
         rep = (
@@ -228,7 +238,7 @@ class OutputNode(Node):
 
     def _initialise(self):
         # arbitrary choice on these
-        self.out_features = np.random.randint(self.classes ** 2, self.FEATURE_LIMIT)
+        self.out_features = np.random.randint(self.classes, self.FEATURE_LIMIT)
         self.dropout_rate = np.random.uniform(high=0.5)
 
         self.in_features = self.successors[0].out_features()
@@ -317,7 +327,8 @@ class ConvNode(KernelNode):
     def __init__(self, node_id: int, ):
         super().__init__(node_id)
         self.pad_mode = 'zeros'
-        self.name = 'Conv Node'
+        self.name = 'Convolutional Node'
+        self.short_name = 'Conv'
 
     def random_initialisation(self):
         super()._random_initialisation()
@@ -370,6 +381,7 @@ class MaxPoolNode(PoolNode):
     def __init__(self, node_id: int, ):
         super().__init__(node_id)
         self.name = 'MaxPool Node'
+        self.short_name = 'MaxPool'
 
     def get_model(self):
         self.model = nn.MaxPool2d(
@@ -385,7 +397,8 @@ class AvgPoolNode(PoolNode):
 
     def __init__(self, node_id: int, ):
         super().__init__(node_id)
-        self.name = 'Average Pool Node'
+        self.name = 'AveragePool Node'
+        self.short_name = 'AvgPool'
 
     def get_model(self):
         self.model = nn.AvgPool2d(
@@ -491,6 +504,7 @@ class SumNode(BinaryNode):
     def __init__(self, node_id: int, ):
         super().__init__(node_id)
         self.name = 'Sum Node'
+        self.short_name = 'Sum'
 
     def get_processing_stack(self):
         for suc in self.successors:
@@ -523,6 +537,7 @@ class ConcatNode(BinaryNode):
     def __init__(self, node_id: int, ):
         super().__init__(node_id)
         self.name = 'Concat Node'
+        self.short_name = 'Concat'
 
     # this needs to be child node dependent
     def get_processing_stack(self):
@@ -569,6 +584,7 @@ class PreProcessingNode(Node):
         self.module_list = module_list
         self.device = None
         self.name = 'Preprocessing Node'
+        self.short_name = 'Prep'
 
     def forward(self, x):
         for l in self.module_list:
