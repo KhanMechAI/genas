@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path
 
 from datetime import datetime
-import matplotlib.pyplot as plt
 
 from genotype.genotype import RandomArchitectureGenerator
 
@@ -41,7 +40,6 @@ for gen in range(0, num_gens):
             min_nodes=args.nodes[0],
         )
         cont = rag.get_architecture()
-    # cont.stats('node')
 
     folder_name = f'{time_str}_{num_gens}_gens'
     f_name = f'{gen}_{cont._suffix}.png'
@@ -49,8 +47,4 @@ for gen in range(0, num_gens):
     out_dir = img_save_dir / folder_name
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f_name
-    # fig = plt.gcf()
     rag.show(save=out_path)
-
-    # fig.savefig(out_path)
-    d=1
