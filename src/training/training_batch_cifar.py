@@ -193,7 +193,6 @@ for gen in range(0, num_gens):
                 loss = criterion(outputs, labels).to(device).cuda(device)
                 loss.backward()
                 optimizer.step()
-                # scheduler.step()
 
                 running_loss += loss.item()
 
