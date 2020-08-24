@@ -1,0 +1,23 @@
+% !TEX root = ..\report.tex
+
+\section{Introduction}
+    \label{sec:intro}
+
+    \subsection{Problem}
+    Artificial neural networks (ANN) have revolutionised the field of Artificial Intelligence in recent years. More specifically, deep neual networks. ANN's have been extremely success full in computer vision and natural language processing tasks. For example, ANN's are capable of classifying images, segmenting images, compression, generative artwork, text generation and image captioning. This machine learning technique is modelled on the brain architecture; a series of interconnected nodes (neurons) that represent the flow of information with mathematical operations at the nodes. The architecture of the network defines the connectivity between nodes and the mathematical operator at the node. The design of the architecture however, is not an exact science. Though not completely arbitrary, the main design process is trial and error. Being able to find an optimal architecture for a specific task will mean fewer parameters in a model, and by extension faster computation (lower latency) and a smaller memory footprint. Further, finding multi-skill neural network architectures in the pursuit of general artificial intelligence will require more sophisticated techniques than 'guess and check'. This is the problem explored in this paper.
+
+    \subsection{Proposal}
+
+There are a number of approaches to Neural Architecture Search (NAS) that have been investigated. One group of approaches uses reinforcement learning to navigate the search space. Another is the differential architecture search (DARTS), wherein the architecture si treated as continuous and optimised with adaptions on gradient descent. The family of approaches under investigation in this paper are the evolutionary algorithms (Neruo Evolution).
+
+Initial aspirations of this work were to implement a genetic algorithm for designing neural networks. This involves first developing an encoding of the neural achritecture, then performing evolutionary mutations and splicing to generate new architectures. There is much research in the possible encoding strategies, let alone the literature on applying genetic techniques. In begining the implementation it became apparent that it would be a significant achievement to implement merely the encoding portion of the problem. Therefore, this paper is structured in the following way; a brief literature survey will outline some potential encoding strategies and their suitability to be leveraged under genetic algorithms. Then a discussion of the selcted approach will be presented, followed by the details of the implementation. Though evolutionary algoritms are a topic of further research, with the algorithm that was implemented simple random search could be explored. As such, the results of random search on the MNIST and CIFAR10 datasets will be shown. These results will be reviewed and recommendations for future work will be given.
+
+If the reader would like to explore the algorithm, a Google Colab notebook can be found at the link below.
+
+\href{https://colab.research.google.com/github/KhanMechAI/genas/blob/colab-master/Random_search_training_demo.ipynb}{Random\_search\_training.ipynb}
+
+The source code can be found here \href{https://github.com/KhanMechAI/genas.git}{GENAS Source Code}. Note, the colab-master currently the most up to date branch.
+
+
+
+

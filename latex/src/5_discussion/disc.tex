@@ -1,0 +1,28 @@
+% !TEX root = ..\report.tex
+
+\section{Discussion}
+    \label{sec:disc}
+
+    The results shown in section \ref{sec:results} illustrate both the promise and the amount of work yet left to do to develop the algorithm.
+Random search yielded models able to learn the MNIST dataset with limited training examples and time. This is promising, however the dataset is not particularly challenging. Other machine learning algorithms can also solve MNIST with little training data and low training/fitting time.
+
+Knowing the algorithm can solve vision tasks, the more challenging CIFAR\_10 dataset provides a better benchmark for the method.
+With only 1000 iterations, the models are not able to adequately solve the problem, though this is hardly surprising for a datset of over 60 thousand images. Even so, there were models able to achieve 40\% accuracy in that time.
+
+An interesting observation of the results (results ommited for brevity) shows that many networks fall into a local optima. Often, in this case, the model learns to just rpedict the same class for all images, knowing that it would have a $\frac{1}{10}$ chance of guessing each image correctly. There was no obvious trend as to a particular class that was subject to this phenomena. Though, without further training it is unknown whether any of these models would have simply gone on to iteratively learn each class.
+
+The Random Neural Architecture Search has illustrated that it is possible to discover architectures to solve classification problems.
+This comes at significant computational cost however.
+Each model, all varying in size, is trained separately for 800-1000 iterations.
+To produce fully learned models for an entire generation is impractical. However, there are many areas where the computational cost can be reduced, and where more intelligent searching techniques can be applied to produce more, higher quality models.
+
+Some areas of potential research include:
+
+\begin{itemize}
+    \item Implementing early stopping for degenerate networks
+    \item Using graph similarity scores between members of a population to reduce the number of models trained
+    \item Implementing an evolutionary search algorithm that mutates and splices graphs
+    \item Expanding types of nodes
+    \item Generalising to recurrent problems
+    \item Multi object evolutionary optimisation to factor in latency and model size
+\end{itemize}

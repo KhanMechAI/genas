@@ -1,0 +1,87 @@
+\documentclass[12pt]{article}
+%\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{subfiles}
+\usepackage{svg}
+%\usepackage{xr-hyper}
+\usepackage{pdfpages}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{appendix}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[ruled,linesnumbered, noend, vlined]{algorithm2e}
+\usepackage{amsmath,amsthm,amssymb}
+\usepackage{parskip}
+\usepackage{url}
+\setlength{\parindent}{0mm}
+\usepackage{graphicx}
+
+\usepackage{titlesec}
+\usepackage{mathtools}
+\usepackage{amstext}
+\usepackage{stackengine}
+\usepackage{chngcntr}
+\usepackage{adjustbox}
+\usepackage{etoolbox}
+\usepackage{booktabs, multicol, multirow}
+\usepackage{subcaption}
+\usepackage[nottoc,numbib]{tocbibind}
+\usepackage{enumitem}
+\usepackage{gensymb}
+\usepackage{pdflscape}
+% \usepackage[table]{xcolor}
+% \usepackage[font=itshape]{quoting}
+\usepackage{array}   % for \newcolumntype macro
+
+\counterwithin*{equation}{section}
+\counterwithin*{equation}{subsection}
+
+\newcommand{\sectionbreak}{\clearpage}
+\newlength{\textundbildtextheight}
+%\newcolumntype{C}{>{$}c<{$}} % math-mode version of "l" column type
+%\newcolumntype{L}{>{$}l<{$}} % math-mode version of "l" column type
+% \setcounter{secnumdepth}{0} 
+ 
+\algdef{SE}[SUBALG]{Indent}{EndIndent}{}{\algorithmicend\ }%
+\algtext*{Indent}
+\algtext*{EndIndent}
+
+\usepackage[backend=biber]{biblatex}
+\usepackage{csquotes}
+\bibliographystyle{ieeetr}
+\bibliography{bibliography}% Syntax for version >= 1.2
+
+
+
+\title{COMP9417 Major Project \\
+
+\large Implementation of a Graphed Based Encoding Scheme for Neural Architecture Search
+}
+\author{Khan Schroder-Turner\\
+\small Student: z5020362\\ %replace with your name
+}
+\maketitle
+\newpage
+
+
+\begin{document}
+
+
+
+    \tableofcontents
+    \thispagestyle{empty}
+
+    \include{1_intro/intro}
+    \include{2_problem/encoding}
+    \include{3_implementation/impl}
+    \include{4_results/results}
+    \include{5_discussion/disc}
+
+
+    \printbibliography
+    
+    % \addcontentsline{toc}{chapter}{Bibliography}
+\end{document}
