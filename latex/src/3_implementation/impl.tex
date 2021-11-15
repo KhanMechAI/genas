@@ -1,0 +1,153 @@
+% !TEX root = ..\report.tex
+\section{Implementation}
+    \label{sec:impl}
+
+The graph based approach developed in this research is an extention of the linked list implementation using Object Orient Programming (OOP) in Python.
+
+The initial approach used an entirely OOB based approach, however due to the way the Autograd (automatic differentiation) module is implemented in PyTorch, message passing is not tracked with respect to gradient descent. Subsequently, a hybrid approach was taken.
+
+There are three main components to the implementation; defining the nodes, growing the graph (encoding), and decoding the network to be used. Encoding the graph largely follows the 4 algorithms outlined in \autocite{Irwin-Harris2019}.
+
+
+
+
+    \subsection{Defining the nodes}
+
+There blocks are a total of 9 different node types used in this implementation. These are:
+    \begin{itemize}
+        \item Input node
+        \item Output node
+        \item Convolution node (Conv)
+        \item Max pooling node
+        \item Average pooling node (Avg)
+        \item Sum node
+        \item Concatenation node
+        \item Reference node (Ref, Prep)
+        \item Preprocessing node
+            \begin{itemize}
+                 \item Padding node
+                \item Downsample node
+            \end{itemize}
+    \end{itemize}
+
+The nodes that are avialable for selection in the graph growning are: Input, Conv, Avg, Max, Sum, Concat, and Ref. The Prop nodes are inserted autmatically when compiling the model to ensure there are no dimensionallity problems. The Output node is the root for all others to grow from.
+
+    All nodes inherit from a parent Node class, but the child nodes can be broadly classed as IO nodes (Input Output), Kernel nodes (Conv, Max and Avg), Binary nodes (Sum and Concat) and Support nodes (Ref, Prep). Each node stores a reference to its successors and predecessors to determine input shapes. The output shapes (among other hyper parameters) are chosen randomly from a set of choices. This serves to reduce the solution space. The Input, Max, Avg, Sum, Concat and Prep nodes are single layered, while the Conv node is a block with Multiple layers and the Ref node is an empty node. Each node has an arity, that is, the number of legal inputs.
+
+
+
+    \subsubsection{IO nodes}
+The purpose of these nodes it to allow data to flow into and out of the model.
+
+The Input node is the node that defines the input dimensions of the data. Once the Input node is defined, all other nodes can calculate their respective input and output shapes. It has no hyper parameters.
+
+The Output node for a classification problem, as is the case in this implementation, is itself a block of two fully connected layers. This node first flattens any inputs and passes this to a hidden layer. This hidden layer is then connected to the a dropout layer, then finally connected with the output layer. The output layer has a number of outputs equal to the number of classes for a the classification problem. The output node has two hyper parameters; dropout rate and size of the hidden layer. The dropout is in $[0, 0.5]$ and the hidden layer size is within $[(\text{number of classes})^{2}, 4092]$. This range was chosen to reduce the search space to model sizes that are at least partially solvable on a single GPU.
+
+The Input node has an arity of 0 and the Output node has an arity of 1.
+
+
+\subsubsection{Kernel nodes}
+The Kernel nodes are the nodes that have a kernel size as a hyper parameter. The Conv, Max and Avg layers all randomly select a kernel size from a set.
+
+The Conv node is also paramaterised by number of filters. The hyperparamerters for the Conv are: kernels size in$ \left\{ 3, 3, 5, 7 \right\} $and number of filters in $\left\{ 32, 64, 128, 256, 512 \right\}$. The choice is biased toward 3 to encourage smaller models, for both trainability and memory footprint. Initially, the padding style was also parameterised, however further research implied that it is not a significant factor to model performance. Hence, it has been fixed to a zero padding. Conv nodes have a convolutional layer, then  Leaky ReLu activation, followed by a batch normalisation.
+
+The Max and Avg pool also have a kernel size hyperparameter;$ \left\{2, 2, 2, 2, 3, 3, 5, 7 \right\}$. The kernel is more heavily biased in the pooling nodes as they reduce the input size proportional to the kernel size. Stacking multiple pooling nodes can quickly degenerate a graph. Further, larger kernel sizes can be seen as stacking multiple smaller kernel sizes in series.
+
+Kernel nodes have an arity of 1.
+
+
+\subsubsection{Binary nodes}
+
+The Binary nodes have no hyperparameters, though they are one of the more interesting implementaitondetails. Each Binary node must generate the necessary pre-processing nodes to ensure the inputs can be properly summed or concatenated. This involves disconnecting the incoming connections and reconnecting them to the required Prep node. The Prep node then becomes the new input node to the Binary node.
+
+The Sum node adds two inputs channel-wise and the Concat node concatenates two input tensors channel-wise. The Sum node has two preprocessors; a Padding node and a Downsample. If two inputs arent of the same height and width, the larger is downsampled. If the two incoming tensors dont have the same amount of channels, zero channels are padded onto the smaller. The Concat node just has the Downsampling preprocessor.
+
+Binary nodes have an arity of 2.
+\subsubsection{Support nodes}
+
+The support nodes are the Ref and the Prep nodes. The Prep nodes are as described in the Binary nodes section. There are two core operations; Downsampling and Padding. The Ref node is used in the graph growing part of the algorithm and has no layers. It functions to allow skip connections to be formed in the graph.
+
+Support nodes have an arity of 1.
+
+    \subsection{Growing the Graph - Encoding}
+
+The algorithm starts by initialising an empty graph with two nodes; an Output node and another random node. The random node is restricted from being an Input or Ref node as this would be a trivial neural network. Such graphs are termed degenerate graphs in this study. A maximum depth is specified to limit the algorithm, however this can be tuned as required. The id of the random node and the current depth of the graph is put into a queue as a tuple $(n_{0}, 0)$. The id is the predecessor of the next node to be generated. Based on the predecessor, certain node types can be excluded as they would cause a degenerate graph.
+
+An element is popped from the queue $(n_{i}, l_{i})$. While the number of connections into the node is less than the arity we do the following procedure:
+
+\begin{enumerate}
+    \item If the level,$ l_{i}$, is equal to the target depth an input node added to the graph terminating random generation.
+    \item Otherwise, the incompatible nodes are computed (as per \autocite{Irwin-Harris2019} ) and set of candidate new node types are found by taking the set difference of the incompatible nodes and all nodes.
+    \item If the new node is a Ref node, we record the id in a set S. Later, all the Ref nodes are used to connect random pairs of nodes in the graph.
+    \item If the node is not a Ref node, and it is not an Input node we add it to the queue $(n_{i+1}, l_{i+1})$.
+\end{enumerate}
+
+Once the algorithm has terminated, each Ref node in set S is replaced with a connection between its parent and a random node in the graph. This enables arbitryily complex interconnections between nodes in the graph.
+
+
+In this implementation the Input nodes are contracted to a single input as the experimental evaluation is a classification task on MNIST and CIFAR10. This does not require recurrent architecture as there is no correlation between the image sequences. Note that it is the nodes of arity 2, i.e. the Binary nodes, that will have input connections as they allow empty children (Ref nodes). A Kernel node however, cannot have an empty child otherwise the the algorithm terminates. In practice, its is more effectual to also specify a minimum depth, then to allow Kernel nodes to have Ref children. This reduces the number of degenerate graphs with just a single block allowing for more interesting potential structures to emerge.
+
+Excess pool nodes are pruned from the graph according to \autocite{Irwin-Harris2019}. The threshold for excess pooling nodes is $\log_2(\max{\left\( \text{input_height}, \text{input_width} \right\)]})$. The are removed form the input nodes first as this has been shown to reduce the performance of models by destroying too much information too early in the model.
+
+Following the contraction and pool pruning, the nodes successors and predecessors are updated. The encoding is ready to be decoded.
+
+
+\subsubsection{Building the network - Decoding}
+
+Once we have an encoded graph, the procedure for decoding is relatively straight forward.
+
+\begin{enumerate}
+    \item Initialise each node. The stored parameters are used to create the neural network layers at each node. Each node is now callable.
+    \begin{itemize}
+        \item If the node is a Binary node, it also intialises the preprocessing nodes and ammends the graph.
+    \end{itemize}
+    \item Create a dictionary to map node id to the node instance
+    \item Create a dictionary mapping node id to node id's of input nodes.
+\end{enumerate}
+
+The more innovative step is the process of passing information through the graph. The initial attempt used OOP to propagate information through the graph. This a convenient way of programming, though could not be used in the final implementation. Here is the intial approach:
+\begin{enumerate}
+    \item Pass input array to the Input node.
+    \item The Input node calls the predecessor nodes on the input. Wait for non null return value then return.
+    \item If a node doesnt have all its inputs, store input and return NULL.
+    \item If a node has all its inputs, the node computes and passes its result to its predecessors. Wait for non null return value then return.
+    \item If the node is the Output node, return value.
+\end{enumerate}
+
+This approach is intuitive with OOP, however, the automatic differentiation module in PyTorch cannot follow the recursion stack to maintain a trace of the gradients over the nodes. Hence another approach was developed. The final approach that was developed utilised the two dictionaries defined above. It is as follows:
+%
+%\Comment{x is an input tensor, FunctionMap contains references to the functions at each node, InputMap is map between n_{i} and the node ids of the nodes that it recieves input from}
+\begin{algorithm}
+    \caption{Random Architecture Forward Pass}\label{forward}
+    \begin{algorithmic}[1]
+        \Procedure{Forward}{$x, FunctionMap, InputMap$}
+            \State $Next  \gets  \Call{Queue}{n_{0}}$
+            \State $O  \gets  \Call{Dict}{n_{0}, [x_{0}, y_{0} ...]}$
+            \State$C  \gets  \left\{  \right\}$
+            \Statex
+            \While{$Next \neq \emptyset$}
+                \State $next\_id \gets Next.pop()$
+                \State{$in_{next\_id} \gets O.pop(next\_id)$}\Comment{Pop the list of inputs}
+                \State{$Node_{next\_id} \gets FunctionMap(next\_id)$}\Comment{Retrieve the Node}
+                \State{$result_{next\_id}, [\text{successor node IDs}] \gets \text{Node}_{next\_id}(\text{in}_{next\_id})$}
+                \Statex
+                \Indent
+                    \For{$ n \in  [\text{successor node IDs}]$}
+                        \State{$O[n].append(result_{next\_id})$}\Comment{Store the result}
+                    \EndFor
+                    \Statex \hskip1.5em \textbf{end for}
+                \EndIndent
+            \EndWhile
+            \State{$C.add(next\_id)$}
+            \State{$candidates \gets \Call{FullInputs}{\text{O}}$}\Comment{Returns IDs of Nodes with full inputs}
+            \State{$candidates \gets candidates \setminus Next$}\Comment{Set difference to avoid duplicates}
+            \State{$candidates \gets candidates \setminus C$}\Comment{Set difference to avoid duplicates}
+            \State{$Next.append(candidates)$}\Comment{Add the filtered candidates to the Queue}
+        \State{$\textbf{return }  result_{next\_id}$}
+        \EndProcedure
+    \end{algorithmic}
+\end{algorithm}
+
+Using this method, the auto-differentiation module is able to compute the gradients across each of the nodes allowing stochastic gradient descent to be performed.
+
+

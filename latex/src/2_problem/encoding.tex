@@ -1,0 +1,24 @@
+% !TEX root = ..\report.tex
+
+\section{Neural Architecture Encoding}
+    \label{sec:encoding}
+
+    Neural networks, being modelled after the brain's interconnected network of neurons, are often represented as graphs. To be precise, directed acyclic graphs \autocite{Fekiac2011}. As such, there are many encoding schemes based off of the basic representations of a graph. These range from the naive adjacency matrix representation, to lists of tuples and linked lists. The benefit to the graph based approach is being able to leverage the vast literature of graph theory to aid in implementation.
+
+    Other encoding methods that lend them selves to evolutionary algorithms are string based encodings \autocite{Fekiac2011} where clear cross overs can be made, and bit/letter flips generate new architectures easily. These methods tend to produce many degenerate architectures that arent able to be constructed.
+
+The approach that was taken in this study is a graph based approach modelling the same approach as in \autocite{Irwin-Harris2019}. The idea is to iteritively grow a tree where the root node is the output node. Each node that is grown into the network is from a set of block's, where a block is a series of layers. Each block has its own set of hyper parameters depending on the blocks type.
+
+The blocks that are available for selection are;  Convolutional (Conv), Max Pooling, Average Pooling, Sum, Concatenation (Concat), Reference. Additionally, in this implementation, for every Sum or Concat there are two child nodes which are spawned and inserted into the graph. They are inserted between the Sum or Concat node and the incoming connection. These two additional nodes are for any pre-processing that is required to make a connection possible. For example, adding in a down sampling layer to resize an input so it can be summed with another input. All leaf nodes are Input blocks; these can contracted to a single input node, or for the recurrent case the nodes can remain leaves and be assigned to some timestep of input within the input domain.
+
+Once the network is fully grown, the nodes can be initialised (decoded) and encapsulated by a controller that allows for inference and training.
+
+
+The full approach is presented in \autocite{Irwin-Harris2019} and specific implementation details will be discussed in the next section.
+
+
+
+%This approach allows architectures to be easily encoded and decoded. Each of the nodes records its own hyper parameters to reconstruct the block, and a list of references its predecessors and successors. A dictionary maps node ids to the node that will accept tensors of the nodes, using the Input node as the entry point into the network.
+
+
+

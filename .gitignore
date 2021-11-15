@@ -3,3 +3,9 @@
 /.ipynb_checkpoints
 /.idea
 /runs/*
+/runs_cifar
+/cifar_10_test
+/mnist_train
+/mnist_train
+/saved_models
+/tests
